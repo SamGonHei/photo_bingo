@@ -61,8 +61,8 @@ export function getInkRemainingSeconds(cell?: BingoCell): number {
   return Math.max(0, Math.ceil((cell!.inkedUntil! - Date.now()) / 1000));
 }
 
-// 모바일 사진 용량 최적화를 위한 캔버스 리사이즈 (localStorage 한도 방지)
-export function resizeImage(file: File, maxWidth = 800, quality = 0.75): Promise<string> {
+// 모바일 사진 용량 최적화를 위한 캔버스 리사이즈 (클라우드 전송 및 용량 최적화)
+export function resizeImage(file: File, maxWidth = 400, quality = 0.5): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (event) => {

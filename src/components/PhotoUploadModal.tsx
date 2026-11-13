@@ -30,7 +30,7 @@ export const PhotoUploadModal: React.FC<Props> = ({
 
     try {
       setIsLoading(true);
-      const resizedBase64 = await resizeImage(file, 900, 0.78);
+      const resizedBase64 = await resizeImage(file, 400, 0.5);
       onPhotoSubmit(cellIndex, resizedBase64);
       onClose();
     } catch (err) {
