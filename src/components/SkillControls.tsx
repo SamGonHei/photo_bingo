@@ -5,7 +5,6 @@ import { Sparkles, Lock } from 'lucide-react';
 interface Props {
   currentUser: UserProfile;
   currentTeam: TeamState;
-  opponentTeam: TeamState;
   isStarted: boolean;
   onUseInkAttack: () => void;
   onUseShuffleBoard: () => void;
@@ -20,22 +19,22 @@ export const SkillControls: React.FC<Props> = ({
 }) => {
   const inkRemaining = currentTeam.skills.inkAttack;
   const shuffleRemaining = currentTeam.skills.shuffleBoard;
-  const canUseSkills = currentUser.isLeader; // 팀장만 사용 가능
+  const canUseSkills = currentUser.isLeader;
 
   return (
-    <div className="w-full bg-slate-50/90 border border-slate-200/70 rounded-2xl p-2 my-1 shrink-0">
+    <div className="w-full bg-linear-to-r from-amber-50/90 via-orange-50/90 to-rose-50/90 border-2 border-orange-200/80 rounded-2xl p-2 my-1 shrink-0 shadow-2xs">
       <div className="flex items-center justify-between mb-1 px-1">
         <span className="text-[11px] font-black text-slate-700 flex items-center gap-1 font-jua">
-          <Sparkles className="w-3 h-3 text-indigo-500" />
-          <span>{currentTeam.name} 방해 스킬</span>
+          <Sparkles className="w-3 h-3 text-amber-500" />
+          <span>{currentTeam.name}의 방해 스킬</span>
         </span>
-        <span className="text-[10px] text-slate-400 font-medium">
-          {canUseSkills ? '상대팀 실루엣을 견제하세요!' : '👑 팀장 전용 권한'}
+        <span className="text-[10px] text-slate-400 font-bold">
+          {canUseSkills ? '상대팀의 판을 흔들어보세요!' : '👑 팀장 전용 스킬'}
         </span>
       </div>
 
       <div className="grid grid-cols-2 gap-1.5">
-        {/* 먹물 투척 버튼 */}
+        {/* 먹물 투척 */}
         <button
           onClick={onUseInkAttack}
           disabled={!isStarted || inkRemaining <= 0 || !canUseSkills}
@@ -48,11 +47,11 @@ export const SkillControls: React.FC<Props> = ({
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-base shrink-0">🦑</span>
             <div className="truncate">
-              <div className="text-[11px] font-black leading-tight flex items-center gap-1">
+              <div className="text-[11px] font-black leading-tight flex items-center gap-1 font-jua">
                 <span>먹물 투척</span>
                 {!canUseSkills && <Lock className="w-2.5 h-2.5 text-slate-400" />}
               </div>
-              <div className="text-[9px] text-purple-700/70 leading-none truncate">
+              <div className="text-[9px] text-purple-700/80 leading-none truncate font-sans">
                 상대 2칸 3분 차단
               </div>
             </div>
@@ -68,7 +67,7 @@ export const SkillControls: React.FC<Props> = ({
           </span>
         </button>
 
-        {/* 판 흔들기 버튼 */}
+        {/* 판 흔들기 */}
         <button
           onClick={onUseShuffleBoard}
           disabled={!isStarted || shuffleRemaining <= 0 || !canUseSkills}
@@ -81,11 +80,11 @@ export const SkillControls: React.FC<Props> = ({
           <div className="flex items-center gap-1.5 min-w-0">
             <span className="text-base shrink-0">🌪️</span>
             <div className="truncate">
-              <div className="text-[11px] font-black leading-tight flex items-center gap-1">
+              <div className="text-[11px] font-black leading-tight flex items-center gap-1 font-jua">
                 <span>판 흔들기</span>
                 {!canUseSkills && <Lock className="w-2.5 h-2.5 text-slate-400" />}
               </div>
-              <div className="text-[9px] text-blue-700/70 leading-none truncate">
+              <div className="text-[9px] text-blue-700/80 leading-none truncate font-sans">
                 상대 전체 셔플
               </div>
             </div>
