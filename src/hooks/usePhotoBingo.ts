@@ -1,14 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { GameState, TeamId, UserProfile, ChatMessage } from '../types';
 import { INITIAL_MISSIONS } from '../data/missions';
-import { createShuffledCells } from '../utils/bingo';
+import { createShuffledCells, calculateCompletedLines, shuffleArray, isCellInked } from '../utils/bingo';
 import confetti from 'canvas-confetti';
 
-const STORAGE_KEY = 'photo_bingo_cloud_v1';
-// 글로벌 클라우드 실시간 REST 엔드포인트 (GitHub Pages에서도 404 없이 100% 작동)
-const CLOUD_API_URL = 'https://api.restful-api.dev/objects/ff808181a09d98f701a1d40c2f521eef';
+const STORAGE_KEY = 'photo_bingo_safe_state_v1';
+const INK_DURATION_MS = 180 * 1000;
 
-function getInitialGameState(): GameState {
+export function getInitialGameState(): GameState {
   return {
     phase: 'WAITING',
     isStarted: false,
@@ -42,11 +41,44 @@ function getInitialGameState(): GameState {
   };
 }
 
+export function sanitizeGameState(raw: unknown): GameState {
+  const base = getInitialGameState();
+  if (!raw || typeof raw !== 'object') return base;
+
+  const r = raw as Partial<GameState>;
+
+  const teamA = r.teamA && Array.isArray(r.teamA.cells) && r.teamA.cells.length === 16
+    ? { ...base.teamA, ...r.teamA }
+    : base.teamA;
+
+  const teamB = r.teamB && Array.isArray(r.teamB.cells) && r.teamB.cells.length === 16
+    ? { ...base.teamB, ...r.teamB }
+    : base.teamB;
+
+  return {
+    phase: r.phase || 'WAITING',
+    isStarted: Boolean(r.isStarted),
+    durationSeconds: r.durationSeconds || 7200,
+    startTime: r.startTime ?? null,
+    winnerTeam: r.winnerTeam ?? null,
+    candidateTeam: r.candidateTeam ?? null,
+    teamA,
+    teamB,
+    messages: Array.isArray(r.messages) ? r.messages : [],
+  };
+}
+
+// 로컬 백엔드 API 호출 URL
+function getApiEndpoint(path: string): string {
+  // 모바일 Wi-Fi 접속 시 3000번 포트의 프록시 활용
+  return path;
+}
+
 export function usePhotoBingo(currentUser: UserProfile | null) {
   const [gameState, setGameState] = useState<GameState>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) return sanitizeGameState(JSON.parse(saved));
     } catch {
       // ignore
     }
@@ -59,79 +91,74 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
   const [boardShakeTeam, setBoardShakeTeam] = useState<TeamId | null>(null);
 
   const prevIsStarted = useRef(gameState.isStarted);
-  const isUpdatingRef = useRef(false);
+  const bcRef = useRef<BroadcastChannel | null>(null);
 
-  // 클라우드에서 최신 상태 읽어오기 (1초 폴링)
-  const fetchCloudState = useCallback(async () => {
-    if (isUpdatingRef.current) return;
+  // 로컬스토리지 및 BroadcastChannel 저장
+  const persistState = useCallback((state: GameState) => {
+    const valid = sanitizeGameState(state);
+    setGameState(valid);
     try {
-      const res = await fetch(CLOUD_API_URL);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
+      bcRef.current?.postMessage({ type: 'SYNC_STATE', payload: valid });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // BroadcastChannel 동기화 (같은 기기 / 브라우저 탭 실시간)
+  useEffect(() => {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel('photo_bingo_active_channel');
+      bcRef.current = bc;
+      bc.onmessage = (event) => {
+        if (event.data?.type === 'SYNC_STATE' && event.data.payload) {
+          setGameState(sanitizeGameState(event.data.payload));
+        }
+      };
+    }
+    return () => {
+      bcRef.current?.close();
+    };
+  }, []);
+
+  // 서버 API 동기화 (1.5초 폴링, 404 시에도 에러 없이 조용히 스킵)
+  const syncWithServer = useCallback(async () => {
+    try {
+      const res = await fetch(getApiEndpoint('/api/state'));
       if (res.ok) {
         const json = await res.json();
-        const serverState: GameState = json.data;
-
-        if (serverState && typeof serverState.isStarted === 'boolean') {
-          // 서버에서 게임 시작 감지 시 카운트다운 연출
-          if (!prevIsStarted.current && serverState.isStarted) {
+        if (json.success && json.state) {
+          const valid = sanitizeGameState(json.state);
+          if (!prevIsStarted.current && valid.isStarted) {
             setCountdownText('준비~');
             setTimeout(() => {
               setCountdownText('시작! 🚀');
               setTimeout(() => {
                 setCountdownText(null);
                 setIsShufflingEffect(true);
-                setTimeout(() => setIsShufflingEffect(false), 600);
-              }, 500);
-            }, 600);
+                setTimeout(() => setIsShufflingEffect(false), 500);
+              }, 400);
+            }, 500);
           }
-          prevIsStarted.current = serverState.isStarted;
-
-          setGameState(serverState);
+          prevIsStarted.current = valid.isStarted;
+          setGameState(valid);
           try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(serverState));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(valid));
           } catch {
             // ignore
           }
         }
       }
     } catch {
-      // 오프라인 대비 로컬 유지
+      // 서버 미응답 시에도 화면이 절대 멈추지 않고 로컬 상태 유지
     }
   }, []);
 
-  // 1초 주기로 자동 동기화
   useEffect(() => {
-    fetchCloudState();
-    const interval = setInterval(fetchCloudState, 1000);
+    syncWithServer();
+    const interval = setInterval(syncWithServer, 1500);
     return () => clearInterval(interval);
-  }, [fetchCloudState]);
-
-  // 클라우드에 상태 쓰기 (PUT)
-  const saveToCloud = useCallback(async (newState: GameState) => {
-    setGameState(newState);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newState));
-    } catch {
-      // ignore
-    }
-
-    isUpdatingRef.current = true;
-    try {
-      await fetch(CLOUD_API_URL, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: 'photo_bingo',
-          data: newState,
-        }),
-      });
-    } catch (e) {
-      console.error('Cloud save error', e);
-    } finally {
-      setTimeout(() => {
-        isUpdatingRef.current = false;
-      }, 500);
-    }
-  }, []);
+  }, [syncWithServer]);
 
   // 2시간 타이머
   useEffect(() => {
@@ -161,7 +188,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     }
   }, [gameState.winnerTeam]);
 
-  // 게임 시작 (오직 sam만)
+  // 게임 시작 (오직 sam만) - 로컬 즉시 반영!
   const startGame = useCallback(() => {
     if (!currentUser?.canStartGame) {
       alert('⚠️ 게임 시작은 주최자(SAM)만 누를 수 있습니다!');
@@ -201,27 +228,39 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
         };
 
         prevIsStarted.current = true;
-        await saveToCloud(startedState);
+        persistState(startedState);
         setTimeout(() => setIsShufflingEffect(false), 500);
+
+        // 서버에도 알림
+        try {
+          await fetch(getApiEndpoint('/api/start'), { method: 'POST' });
+        } catch {
+          // ignore
+        }
       }, 500);
     }, 600);
-  }, [currentUser, gameState, saveToCloud]);
+  }, [currentUser, gameState, persistState]);
 
   // 게임 리셋
   const resetGame = useCallback(async () => {
     const fresh = getInitialGameState();
     prevIsStarted.current = false;
-    await saveToCloud(fresh);
-  }, [saveToCloud]);
+    persistState(fresh);
+    try {
+      await fetch(getApiEndpoint('/api/reset'), { method: 'POST' });
+    } catch {
+      // ignore
+    }
+  }, [persistState]);
 
   // 사진 등록
   const completeMission = useCallback(async (positionIndex: number, photoUrl: string) => {
     if (!currentUser) return;
     const teamKey = currentUser.teamId;
-    const currentTeam = gameState[teamKey];
+    const currentTeam = gameState[teamKey] || getInitialGameState()[teamKey];
     const targetCell = currentTeam.cells[positionIndex];
 
-    if (targetCell.inkedUntil && targetCell.inkedUntil > Date.now()) {
+    if (isCellInked(targetCell)) {
       alert('🦑 먹물에 덮여 있어 아직 등록할 수 없습니다!');
       return;
     }
@@ -242,17 +281,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       return cell;
     });
 
-    // 라인 수 계산
-    const BINGO_LINES = [
-      [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15],
-      [0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15],
-      [0, 5, 10, 15], [3, 6, 9, 12],
-    ];
-    let lines = 0;
-    for (const line of BINGO_LINES) {
-      if (line.every((i) => updatedCells[i]?.isCompleted)) lines++;
-    }
-
+    const lines = calculateCompletedLines(updatedCells);
     let nextPhase = gameState.phase;
     let candidate = gameState.candidateTeam;
 
@@ -273,8 +302,23 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    await saveToCloud(nextState);
-  }, [currentUser, gameState, saveToCloud]);
+    persistState(nextState);
+
+    try {
+      await fetch(getApiEndpoint('/api/cell'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          teamId: teamKey,
+          positionIndex,
+          photoUrl,
+          userId: currentUser.id,
+        }),
+      });
+    } catch {
+      // ignore
+    }
+  }, [currentUser, gameState, persistState]);
 
   // 심사 투표
   const voteMission = useCallback(async (positionIndex: number, isApprove: boolean) => {
@@ -287,7 +331,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     }
 
     const targetTeam = gameState[targetTeamKey];
-    const targetCell = targetTeam.cells[positionIndex];
+    const targetCell = targetTeam?.cells?.[positionIndex];
     if (!targetCell || !targetCell.isCompleted) return;
 
     const voterId = currentUser.id;
@@ -323,16 +367,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       return c;
     });
 
-    const BINGO_LINES = [
-      [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15],
-      [0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15],
-      [0, 5, 10, 15], [3, 6, 9, 12],
-    ];
-    let lines = 0;
-    for (const line of BINGO_LINES) {
-      if (line.every((i) => updatedCells[i]?.isCompleted)) lines++;
-    }
-
+    const lines = calculateCompletedLines(updatedCells);
     let nextPhase = gameState.phase;
     let winner = gameState.winnerTeam;
 
@@ -359,8 +394,18 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    await saveToCloud(nextState);
-  }, [currentUser, gameState, saveToCloud]);
+    persistState(nextState);
+
+    try {
+      await fetch(getApiEndpoint('/api/vote'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ positionIndex, isApprove, voterId }),
+      });
+    } catch {
+      // ignore
+    }
+  }, [currentUser, gameState, persistState]);
 
   // 먹물 투척
   const useInkAttack = useCallback(async () => {
@@ -380,7 +425,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     }
 
     const availableIndices = targetTeam.cells
-      .map((cell, idx) => (!cell.inkedUntil || cell.inkedUntil <= Date.now() ? idx : -1))
+      .map((cell, idx) => (!isCellInked(cell) ? idx : -1))
       .filter((idx) => idx !== -1);
 
     if (availableIndices.length === 0) {
@@ -388,10 +433,9 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       return;
     }
 
-    // 셔플 후 2개 선택
-    const shuffled = [...availableIndices].sort(() => Math.random() - 0.5);
+    const shuffled = shuffleArray(availableIndices);
     const targetIndices = shuffled.slice(0, 2);
-    const inkedUntil = Date.now() + 180 * 1000;
+    const inkedUntil = Date.now() + INK_DURATION_MS;
 
     const updatedTargetCells = targetTeam.cells.map((cell, idx) => {
       if (targetIndices.includes(idx)) {
@@ -412,9 +456,19 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    await saveToCloud(nextState);
+    persistState(nextState);
     alert(`🦑 [먹물 투척!] 상대 ${targetTeam.name}의 칸 2개를 3분간 가렸습니다!`);
-  }, [currentUser, gameState, saveToCloud]);
+
+    try {
+      await fetch(getApiEndpoint('/api/skill/ink'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attackerTeamId: attackerKey }),
+      });
+    } catch {
+      // ignore
+    }
+  }, [currentUser, gameState, persistState]);
 
   // 판 흔들기
   const useShuffleOpponentBoard = useCallback(async () => {
@@ -433,25 +487,15 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       return;
     }
 
-    const shuffled = [...targetTeam.cells]
-      .sort(() => Math.random() - 0.5)
-      .map((cell, index) => ({
-        ...cell,
-        positionIndex: index,
-      }));
+    const shuffled = shuffleArray(targetTeam.cells).map((cell, index) => ({
+      ...cell,
+      positionIndex: index,
+    }));
 
     setBoardShakeTeam(targetKey);
     setTimeout(() => setBoardShakeTeam(null), 700);
 
-    const BINGO_LINES = [
-      [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15],
-      [0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15],
-      [0, 5, 10, 15], [3, 6, 9, 12],
-    ];
-    let lines = 0;
-    for (const line of BINGO_LINES) {
-      if (line.every((i) => shuffled[i]?.isCompleted)) lines++;
-    }
+    const lines = calculateCompletedLines(shuffled);
 
     const nextState: GameState = {
       ...gameState,
@@ -466,9 +510,19 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    await saveToCloud(nextState);
+    persistState(nextState);
     alert(`🌪️ [판 흔들기!] 상대 ${targetTeam.name}의 빙고판 전체를 뒤흔들었습니다!`);
-  }, [currentUser, gameState, saveToCloud]);
+
+    try {
+      await fetch(getApiEndpoint('/api/skill/shuffle'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attackerTeamId: attackerKey }),
+      });
+    } catch {
+      // ignore
+    }
+  }, [currentUser, gameState, persistState]);
 
   // 채팅 전송
   const sendChatMessage = useCallback(async (text: string) => {
@@ -489,12 +543,23 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       messages: [...(gameState.messages || []), newMsg],
     };
 
-    await saveToCloud(nextState);
-  }, [currentUser, gameState, saveToCloud]);
+    persistState(nextState);
+
+    try {
+      await fetch(getApiEndpoint('/api/chat'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newMsg),
+      });
+    } catch {
+      // ignore
+    }
+  }, [currentUser, gameState, persistState]);
 
   const userTeamId = currentUser?.teamId ?? 'teamA';
-  const currentTeam = gameState[userTeamId];
-  const opponentTeam = gameState[userTeamId === 'teamA' ? 'teamB' : 'teamA'];
+  const base = getInitialGameState();
+  const currentTeam = gameState[userTeamId] || base[userTeamId];
+  const opponentTeam = gameState[userTeamId === 'teamA' ? 'teamB' : 'teamA'] || base[userTeamId === 'teamA' ? 'teamB' : 'teamA'];
 
   return {
     gameState,

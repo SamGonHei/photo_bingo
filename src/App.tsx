@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
-import { usePhotoBingo } from './hooks/usePhotoBingo';
+import { useState, useEffect, useRef, Component } from 'react';
+import type { ReactNode, ErrorInfo } from 'react';
+import { usePhotoBingo, getInitialGameState } from './hooks/usePhotoBingo';
 import { Header } from './components/Header';
 import { SkillControls } from './components/SkillControls';
 import { BingoCard } from './components/BingoCard';
@@ -11,9 +12,62 @@ import { LoginScreen } from './components/LoginScreen';
 import { ChatDrawer } from './components/ChatDrawer';
 import { getCurrentUser, loginUser, logoutUser } from './utils/auth';
 import type { BingoCell, UserProfile } from './types';
-import { Play, RotateCcw, HelpCircle, Sparkles, Clock, MessageCircle } from 'lucide-react';
+import { Play, RotateCcw, HelpCircle, Sparkles, Clock, MessageCircle, RefreshCw } from 'lucide-react';
 
-export function App() {
+// 크래시 방어용 ErrorBoundary
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('ErrorBoundary caught:', error, info);
+  }
+
+  handleReset = () => {
+    localStorage.clear();
+    window.location.reload();
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="w-full h-screen bg-[#FFF9ED] flex flex-col items-center justify-center p-6 text-center select-none">
+          <div className="text-4xl mb-3 animate-bounce">🐥</div>
+          <h2 className="text-lg font-black text-slate-800 font-jua">
+            화면을 불러오는 중 문제가 발생했습니다
+          </h2>
+          <p className="text-xs text-slate-500 mt-1 mb-4 font-semibold">
+            아래 복구 버튼을 누르면 정상적으로 다시 실행됩니다!
+          </p>
+          <button
+            onClick={this.handleReset}
+            className="px-5 py-3 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white font-black text-sm font-jua shadow-md flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>화면 정상 복구하기</span>
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function MainApp() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [expiredNotice, setExpiredNotice] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -123,12 +177,13 @@ export function App() {
     setIsUploadModalOpen(true);
   };
 
+  // 로그인 화면
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} expiredNotice={expiredNotice} />;
   }
 
   const isCurrentBoardShaking = boardShakeTeam === currentUser.teamId;
-  const candidateTeamState = gameState.candidateTeam ? gameState[gameState.candidateTeam] : null;
+  const candidateTeamState = gameState.candidateTeam ? (gameState[gameState.candidateTeam] || getInitialGameState()[gameState.candidateTeam]) : null;
 
   return (
     <div className="w-full h-full bg-[#FFFDF7] flex flex-col items-center justify-between overflow-hidden select-none">
@@ -211,7 +266,7 @@ export function App() {
                 isCurrentBoardShaking ? 'animate-shake' : ''
               }`}
             >
-              {currentTeam.cells.map((cell, index) => (
+              {(currentTeam?.cells || []).map((cell, index) => (
                 <BingoCard
                   key={`${cell.mission.id}-${index}`}
                   cell={cell}
@@ -332,6 +387,14 @@ export function App() {
         </div>
       )}
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <ErrorBoundary>
+      <MainApp />
+    </ErrorBoundary>
   );
 }
 
