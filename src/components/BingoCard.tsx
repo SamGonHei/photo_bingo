@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { BingoCell } from '../types';
 import { getInkRemainingSeconds } from '../utils/bingo';
-import { Lock, Camera, Check } from 'lucide-react';
+import { Lock, Check } from 'lucide-react';
 
 interface Props {
   cell: BingoCell;
@@ -19,11 +19,9 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
     }
 
     const interval = setInterval(() => {
-      const remaining = getInkRemainingSeconds(cell);
-      setInkTimer(remaining);
-      if (remaining <= 0) {
-        clearInterval(interval);
-      }
+      const rem = getInkRemainingSeconds(cell);
+      setInkTimer(rem);
+      if (rem <= 0) clearInterval(interval);
     }, 1000);
 
     return () => clearInterval(interval);
@@ -40,28 +38,27 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
   return (
     <div
       onClick={() => onCellClick(cell, index)}
-      className={`relative w-full h-full rounded-2xl p-1.5 flex flex-col items-center justify-between overflow-hidden cursor-pointer select-none transition-all duration-200 active:scale-95 shadow-xs border-2 ${
+      className={`relative w-full h-full rounded-xl p-1 flex flex-col items-center justify-between overflow-hidden cursor-pointer select-none transition-all duration-150 active:scale-95 border ${
         isInked
-          ? 'bg-slate-900 border-purple-800 text-white shadow-md'
+          ? 'bg-slate-900 border-purple-800 text-white shadow-xs'
           : cell.isCompleted
-          ? 'bg-amber-50/80 border-amber-400 ring-2 ring-amber-300/40'
-          : 'bg-white hover:bg-orange-50/60 border-orange-200/80 hover:border-orange-300'
+          ? 'bg-amber-50/90 border-amber-400 ring-1 ring-amber-300'
+          : 'bg-white hover:bg-orange-50/50 border-orange-200/90'
       }`}
     >
-      {/* 1. 먹물 투척 오버레이 */}
+      {/* 1. 먹물 오버레이 */}
       {isInked ? (
-        <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-1 text-center z-20 animate-ink">
-          <div className="text-xl mb-0.5 animate-bounce">🦑</div>
-          <div className="text-[10px] font-black text-purple-300 font-jua">먹물 주의!</div>
-          <div className="text-[8px] text-slate-400 mb-0.5">미션 가림</div>
-          <div className="flex items-center gap-0.5 bg-purple-900/90 border border-purple-500/50 px-1.5 py-0.5 rounded-full text-[9px] font-mono font-bold text-amber-300">
-            <Lock className="w-2 h-2" />
+        <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center p-0.5 text-center z-20 animate-ink">
+          <div className="text-sm animate-bounce">🦑</div>
+          <div className="text-[8px] font-black text-purple-300 font-jua leading-tight">먹물!</div>
+          <div className="flex items-center gap-0.5 bg-purple-900 px-1 py-0.2 rounded text-[7.5px] font-mono text-amber-300 mt-0.5">
+            <Lock className="w-1.5 h-1.5" />
             <span>{formatInkTime(inkTimer)}</span>
           </div>
         </div>
       ) : null}
 
-      {/* 2. 완료된 상태: 업로드한 사진 썸네일 & 귀여운 도장 */}
+      {/* 2. 완료 상태: 사진 + CLEAR 스탬프 */}
       {cell.isCompleted && cell.photoUrl ? (
         <>
           <img
@@ -71,38 +68,37 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
           />
           <div className="absolute inset-0 bg-linear-to-t from-black/80 via-black/20 to-transparent" />
 
-          {/* 도장 쾅! 귀여운 스탬프 */}
-          <div className="absolute top-1 right-1 z-10 animate-stamp">
-            <div className="w-6 h-6 rounded-full bg-rose-500/95 backdrop-blur-xs text-white border border-white shadow-md flex items-center justify-center rotate-12">
-              <Check className="w-3.5 h-3.5 stroke-[3]" />
+          {/* 도장 */}
+          <div className="absolute top-0.5 right-0.5 z-10 animate-stamp">
+            <div className="w-4 h-4 rounded-full bg-rose-500 text-white border border-white shadow-xs flex items-center justify-center rotate-12">
+              <Check className="w-2.5 h-2.5 stroke-[3]" />
             </div>
           </div>
 
           <div className="relative z-10 w-full mt-auto px-0.5">
-            <div className="text-[9.5px] font-bold text-white text-center truncate drop-shadow-sm font-jua">
+            <div className="text-[8px] font-bold text-white text-center truncate drop-shadow-xs font-jua leading-none">
               {cell.mission.title}
             </div>
             {cell.completedBy && (
-              <div className="text-[7.5px] text-amber-300 text-center uppercase tracking-wider font-extrabold">
+              <div className="text-[6.5px] text-amber-300 text-center uppercase tracking-wider font-extrabold mt-0.5 leading-none">
                 by {cell.completedBy}
               </div>
             )}
           </div>
         </>
       ) : (
-        /* 3. 미완료 상태: 미션 번호 + 귀여운 이모지 + 미션 타이틀 */
+        /* 3. 미완료 상태: 번호 + 이모지 + 미션 타이틀 */
         <>
-          <div className="w-full flex items-center justify-between text-[8.5px] text-slate-400 font-bold px-0.5">
+          <div className="w-full flex items-center justify-start text-[7.5px] text-slate-400 font-bold px-0.5 leading-none">
             <span className="font-mono">#{index + 1}</span>
-            <Camera className="w-2.5 h-2.5 text-orange-300" />
           </div>
 
-          <div className="text-xl my-auto transform transition-transform group-hover:scale-110">
+          <div className="text-base sm:text-lg my-auto transform transition-transform group-hover:scale-105 leading-none">
             {cell.mission.emoji}
           </div>
 
           <div className="w-full text-center px-0.5">
-            <div className="text-[9.5px] font-bold text-slate-800 leading-tight line-clamp-2 font-jua">
+            <div className="text-[8px] sm:text-[9px] font-bold text-slate-800 leading-tight line-clamp-2 font-jua">
               {cell.mission.title}
             </div>
           </div>

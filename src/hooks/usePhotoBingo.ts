@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { GameState, TeamId, UserProfile } from '../types';
+import type { GameState, TeamId, UserProfile, ChatMessage } from '../types';
 import { INITIAL_MISSIONS } from '../data/missions';
 import {
   createShuffledCells,
@@ -9,6 +9,7 @@ import {
 } from '../utils/bingo';
 import confetti from 'canvas-confetti';
 
+const STORAGE_KEY = 'photo_bingo_game_state_v3';
 const INK_DURATION_MS = 180 * 1000;
 
 function getInitialGameState(): GameState {
@@ -45,72 +46,142 @@ function getInitialGameState(): GameState {
 }
 
 export function usePhotoBingo(currentUser: UserProfile | null) {
-  const [gameState, setGameState] = useState<GameState>(getInitialGameState);
+  // 로컬스토리지에서 복원
+  const [gameState, setGameState] = useState<GameState>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return getInitialGameState();
+  });
+
   const [remainingTime, setRemainingTime] = useState<number>(7200);
   const [countdownText, setCountdownText] = useState<string | null>(null);
   const [isShufflingEffect, setIsShufflingEffect] = useState(false);
   const [boardShakeTeam, setBoardShakeTeam] = useState<TeamId | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
+  const bcRef = useRef<BroadcastChannel | null>(null);
 
-  // 웹소켓 연결 (호스트네임 동적 감지: PC/모바일 동일 포트 3001)
+  // 로컬스토리지 자동 저장
+  const saveLocalState = useCallback((state: GameState) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // BroadcastChannel & Storage 이벤트 (동일 기기 / 다른 탭 실시간 동기화)
   useEffect(() => {
-    const host = window.location.hostname || 'localhost';
-    const wsUrl = `ws://${host}:3001`;
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel('photo_bingo_channel');
+      bcRef.current = bc;
+      bc.onmessage = (event) => {
+        if (event.data?.type === 'SYNC_STATE' && event.data.payload) {
+          setGameState(event.data.payload);
+        }
+      };
+    }
 
-    let ws: WebSocket;
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        try {
+          setGameState(JSON.parse(e.newValue));
+        } catch {
+          // ignore
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      bcRef.current?.close();
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  // 웹소켓 연결 (Vite 프록시 /ws 또는 3001)
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let isCleanedUp = false;
+
     const connect = () => {
+      if (isCleanedUp) return;
       try {
-        ws = new WebSocket(wsUrl);
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        // 1차: 현재 호스트 /ws 프록시
+        const url1 = `${protocol}//${window.location.host}/ws`;
+        // 2차: 직결 3001
+        const url2 = `${protocol}//${window.location.hostname}:3001`;
+
+        const targetUrl = window.location.port === '3000' ? url1 : url2;
+        ws = new WebSocket(targetUrl);
         socketRef.current = ws;
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === 'SYNC_STATE') {
+            if (data.type === 'SYNC_STATE' && data.payload) {
               setGameState(data.payload);
+              saveLocalState(data.payload);
             } else if (data.type === 'COUNTDOWN_START') {
-              // 모든 기기에서 동시 카운트다운 연출
               setCountdownText('준비~');
               setTimeout(() => {
                 setCountdownText('시작! 🚀');
                 setTimeout(() => {
                   setCountdownText(null);
                   setIsShufflingEffect(true);
-                  setTimeout(() => setIsShufflingEffect(false), 800);
-                }, 600);
-              }, 800);
-            } else if (data.type === 'NEW_CHAT') {
-              setGameState((prev) => ({
-                ...prev,
-                messages: [...prev.messages, data.payload],
-              }));
+                  setTimeout(() => setIsShufflingEffect(false), 700);
+                }, 500);
+              }, 700);
+            } else if (data.type === 'NEW_CHAT' && data.payload) {
+              setGameState((prev) => {
+                const next = { ...prev, messages: [...prev.messages, data.payload] };
+                saveLocalState(next);
+                return next;
+              });
             }
-          } catch (e) {
-            console.error('WS Parse error', e);
+          } catch {
+            // ignore
           }
         };
 
         ws.onclose = () => {
-          setTimeout(connect, 2000); // 자동 재연결
+          if (!isCleanedUp) setTimeout(connect, 3000);
         };
-      } catch (err) {
-        console.error('WS Connection error', err);
+      } catch {
+        // ws 실패 시에도 로컬 상태로 100% 정상 작동
       }
     };
 
     connect();
 
     return () => {
+      isCleanedUp = true;
       if (ws) ws.close();
     };
-  }, []);
+  }, [saveLocalState]);
 
-  const sendWs = useCallback((type: string, payload: unknown) => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify({ type, payload }));
+  // 전역 브로드캐스트 (Local + BroadcastChannel + WebSocket 동시 발송)
+  const syncStateEverywhere = useCallback((newState: GameState) => {
+    setGameState(newState);
+    saveLocalState(newState);
+
+    // 1. BroadcastChannel
+    try {
+      bcRef.current?.postMessage({ type: 'SYNC_STATE', payload: newState });
+    } catch {
+      // ignore
     }
-  }, []);
+
+    // 2. WebSocket
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'UPDATE_STATE', payload: newState }));
+    }
+  }, [saveLocalState]);
 
   // 2시간 타이머
   useEffect(() => {
@@ -140,19 +211,65 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     }
   }, [gameState.winnerTeam]);
 
-  // 게임 시작 (오직 sam만)
+  // 게임 시작 (오직 sam만) - 로컬 즉시 반응!
   const startGame = useCallback(() => {
     if (!currentUser?.canStartGame) {
       alert('⚠️ 게임 시작은 주최자(SAM)만 누를 수 있습니다!');
       return;
     }
-    sendWs('START_GAME', {});
-  }, [currentUser, sendWs]);
+
+    // 로컬 즉시 카운트다운 시작
+    setCountdownText('준비~');
+    setTimeout(() => {
+      setCountdownText('시작! 🚀');
+      setTimeout(() => {
+        setCountdownText(null);
+        setIsShufflingEffect(true);
+
+        const newTeamACells = createShuffledCells(INITIAL_MISSIONS);
+        const newTeamBCells = createShuffledCells(INITIAL_MISSIONS);
+
+        const startedState: GameState = {
+          ...gameState,
+          phase: 'PLAYING',
+          isStarted: true,
+          startTime: Date.now(),
+          winnerTeam: null,
+          candidateTeam: null,
+          teamA: {
+            ...gameState.teamA,
+            cells: newTeamACells,
+            completedLines: 0,
+            skills: { inkAttack: 2, shuffleBoard: 1 },
+          },
+          teamB: {
+            ...gameState.teamB,
+            cells: newTeamBCells,
+            completedLines: 0,
+            skills: { inkAttack: 2, shuffleBoard: 1 },
+          },
+          messages: [], // 채팅 리셋
+        };
+
+        syncStateEverywhere(startedState);
+        setTimeout(() => setIsShufflingEffect(false), 600);
+
+        // 웹소켓에 시작 알림
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify({ type: 'START_GAME', payload: {} }));
+        }
+      }, 500);
+    }, 700);
+  }, [currentUser, gameState, syncStateEverywhere]);
 
   // 게임 리셋
   const resetGame = useCallback(() => {
-    sendWs('RESET_GAME', {});
-  }, [sendWs]);
+    const fresh = getInitialGameState();
+    syncStateEverywhere(fresh);
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'RESET_GAME', payload: {} }));
+    }
+  }, [syncStateEverywhere]);
 
   // 미션 사진 등록
   const completeMission = useCallback((positionIndex: number, photoUrl: string) => {
@@ -186,14 +303,14 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     let nextPhase = gameState.phase;
     let candidate = gameState.candidateTeam;
 
-    // 3줄 빙고 달성 시 즉시 심사(REVIEWING) 단계 돌입!
     if (newCompletedLines >= 3 && gameState.phase === 'PLAYING') {
       nextPhase = 'REVIEWING';
       candidate = teamKey;
       alert(`🎉 [${currentTeam.name} 3줄 달성!] 상대팀의 심사(인정/노인정 투표)가 시작됩니다!`);
     }
 
-    const nextState: Partial<GameState> = {
+    const nextState: GameState = {
+      ...gameState,
       phase: nextPhase,
       candidateTeam: candidate,
       [teamKey]: {
@@ -203,14 +320,13 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    sendWs('UPDATE_STATE', nextState);
-  }, [currentUser, gameState, sendWs]);
+    syncStateEverywhere(nextState);
+  }, [currentUser, gameState, syncStateEverywhere]);
 
-  // 심사 투표 (인정 / 노인정)
+  // 심사 투표
   const voteMission = useCallback((positionIndex: number, isApprove: boolean) => {
     if (!currentUser || !gameState.candidateTeam) return;
 
-    // 투표자는 반드시 상대팀이어야 함
     const targetTeamKey = gameState.candidateTeam;
     if (currentUser.teamId === targetTeamKey) {
       alert('⚠️ 본인 팀의 사진에는 투표할 수 없습니다. 상대팀이 심사합니다!');
@@ -225,23 +341,18 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     let approved = targetCell.approvedUsers ? [...targetCell.approvedUsers] : [];
     let rejected = targetCell.rejectedUsers ? [...targetCell.rejectedUsers] : [];
 
-    // 기존 표 제거
     approved = approved.filter((id) => id !== voterId);
     rejected = rejected.filter((id) => id !== voterId);
 
-    if (isApprove) {
-      approved.push(voterId);
-    } else {
-      rejected.push(voterId);
-    }
+    if (isApprove) approved.push(voterId);
+    else rejected.push(voterId);
 
     let reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED' = 'PENDING';
     let isCompleted: boolean = targetCell.isCompleted;
 
-    // 과반수 기준: 상대팀 인원 5명 중 3명 이상
     if (rejected.length >= 3) {
       reviewStatus = 'REJECTED';
-      isCompleted = false; // 노인정 과반수로 탈락!
+      isCompleted = false; // 탈락!
     } else if (approved.length >= 3) {
       reviewStatus = 'APPROVED';
     }
@@ -264,11 +375,9 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     let winner = gameState.winnerTeam;
 
     if (newCompletedLines < 3 && rejected.length >= 3) {
-      // 3줄이 깨졌으므로 다시 게임 모드로 복귀
       nextPhase = 'PLAYING';
       alert(`❌ [노인정 과반수!] #${positionIndex + 1}번 미션이 탈락하여 3줄 빙고가 취소되었습니다!`);
     } else {
-      // 심사 대상 칸들이 모두 과반 인정받았는지 체크
       const completedCells = updatedCells.filter((c) => c.isCompleted);
       const allApproved = completedCells.every((c) => (c.approvedUsers?.length ?? 0) >= 3);
       if (allApproved && newCompletedLines >= 3) {
@@ -277,7 +386,8 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       }
     }
 
-    const nextState: Partial<GameState> = {
+    const nextState: GameState = {
+      ...gameState,
       phase: nextPhase,
       winnerTeam: winner,
       [targetTeamKey]: {
@@ -287,8 +397,8 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    sendWs('UPDATE_STATE', nextState);
-  }, [currentUser, gameState, sendWs]);
+    syncStateEverywhere(nextState);
+  }, [currentUser, gameState, syncStateEverywhere]);
 
   // 먹물 투척
   const useInkAttack = useCallback(() => {
@@ -326,7 +436,8 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       return cell;
     });
 
-    sendWs('UPDATE_STATE', {
+    const nextState: GameState = {
+      ...gameState,
       [attackerKey]: {
         ...attackerTeam,
         skills: { ...attackerTeam.skills, inkAttack: attackerTeam.skills.inkAttack - 1 },
@@ -335,10 +446,11 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
         ...targetTeam,
         cells: updatedTargetCells,
       },
-    });
+    };
 
+    syncStateEverywhere(nextState);
     alert(`🦑 [먹물 투척!] 상대 ${targetTeam.name}의 칸 2개를 3분간 가렸습니다!`);
-  }, [currentUser, gameState, sendWs]);
+  }, [currentUser, gameState, syncStateEverywhere]);
 
   // 판 흔들기
   const useShuffleOpponentBoard = useCallback(() => {
@@ -363,9 +475,10 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     }));
 
     setBoardShakeTeam(targetKey);
-    setTimeout(() => setBoardShakeTeam(null), 800);
+    setTimeout(() => setBoardShakeTeam(null), 700);
 
-    sendWs('UPDATE_STATE', {
+    const nextState: GameState = {
+      ...gameState,
       [attackerKey]: {
         ...attackerTeam,
         skills: { ...attackerTeam.skills, shuffleBoard: attackerTeam.skills.shuffleBoard - 1 },
@@ -375,15 +488,16 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
         cells: shuffled,
         completedLines: calculateCompletedLines(shuffled),
       },
-    });
+    };
 
+    syncStateEverywhere(nextState);
     alert(`🌪️ [판 흔들기!] 상대 ${targetTeam.name}의 빙고판 전체를 뒤흔들었습니다!`);
-  }, [currentUser, gameState, sendWs]);
+  }, [currentUser, gameState, syncStateEverywhere]);
 
-  // 채팅 전송
+  // 채팅 전송 (로컬 즉시 반영 + 브로드캐스트)
   const sendChatMessage = useCallback((text: string) => {
     if (!currentUser || !text.trim()) return;
-    const msg = {
+    const newMsg: ChatMessage = {
       id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       senderId: currentUser.id,
       senderName: currentUser.name,
@@ -393,8 +507,18 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       text: text.trim(),
       timestamp: Date.now(),
     };
-    sendWs('SEND_CHAT', msg);
-  }, [currentUser, sendWs]);
+
+    const nextState: GameState = {
+      ...gameState,
+      messages: [...(gameState.messages || []), newMsg],
+    };
+
+    syncStateEverywhere(nextState);
+
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: 'SEND_CHAT', payload: newMsg }));
+    }
+  }, [currentUser, gameState, syncStateEverywhere]);
 
   const userTeamId = currentUser?.teamId ?? 'teamA';
   const currentTeam = gameState[userTeamId];

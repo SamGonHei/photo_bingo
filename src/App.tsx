@@ -68,7 +68,7 @@ export function App() {
     sendChatMessage,
   } = usePhotoBingo(currentUser);
 
-  // 안 읽은 메시지 카운트 관리
+  // 안 읽은 메시지 카운트
   const prevMsgLength = useRef(gameState.messages?.length ?? 0);
   useEffect(() => {
     const currentLength = gameState.messages?.length ?? 0;
@@ -131,9 +131,9 @@ export function App() {
   const candidateTeamState = gameState.candidateTeam ? gameState[gameState.candidateTeam] : null;
 
   return (
-    <div className="h-dvh h-screen w-full bg-[#FFFDF7] flex flex-col items-center justify-center overflow-hidden select-none">
-      <div className="w-full max-w-md h-full flex flex-col bg-[#FFFDF7] shadow-xl border-x border-orange-100 relative overflow-hidden">
-        {/* 상단 파스텔 헤더 */}
+    <div className="w-full h-full bg-[#FFFDF7] flex flex-col items-center justify-between overflow-hidden select-none">
+      <div className="w-full max-w-md h-full flex flex-col bg-[#FFFDF7] border-x border-orange-100 relative overflow-hidden">
+        {/* 상단 헤더 */}
         <Header
           currentUser={currentUser}
           currentTeam={currentTeam}
@@ -143,9 +143,9 @@ export function App() {
           onLogout={handleLogout}
         />
 
-        {/* 메인 영역: 스크롤 0px 고정 */}
-        <main className="flex-1 min-h-0 flex flex-col px-3 py-1 overflow-hidden">
-          {/* 스페셜 스킬 */}
+        {/* 메인 영역 */}
+        <main className="flex-1 min-h-0 flex flex-col px-2 py-0.5 overflow-hidden justify-between">
+          {/* 스킬 바 */}
           <SkillControls
             currentUser={currentUser}
             currentTeam={currentTeam}
@@ -155,31 +155,31 @@ export function App() {
           />
 
           {/* 4x4 빙고 그리드 컨테이너 */}
-          <div className="flex-1 min-h-0 w-full relative my-1">
+          <div className="flex-1 min-h-0 w-full relative my-0.5">
             {/* 시작 전 대기실 */}
             {!gameState.isStarted && !isShufflingEffect && !countdownText && (
-              <div className="absolute inset-0 z-10 bg-white/95 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-5 text-center border-3 border-orange-200 shadow-xl">
-                <div className="w-14 h-14 rounded-3xl bg-orange-100 border-2 border-orange-200 flex items-center justify-center mb-2 animate-bounce">
-                  <Clock className="w-7 h-7 text-orange-500" />
+              <div className="absolute inset-0 z-10 bg-white/95 backdrop-blur-md rounded-2xl flex flex-col items-center justify-center p-3 text-center border-2 border-orange-200 shadow-md">
+                <div className="w-10 h-10 rounded-2xl bg-orange-100 border border-orange-200 flex items-center justify-center mb-1 animate-bounce">
+                  <Clock className="w-5 h-5 text-orange-500" />
                 </div>
-                <h3 className="text-lg font-black text-slate-800 font-jua">
+                <h3 className="text-sm font-black text-slate-800 font-jua">
                   포토빙고 대기실 🏖️
                 </h3>
-                <p className="text-xs text-slate-500 mt-1 max-w-[250px] leading-relaxed font-semibold">
+                <p className="text-[10px] text-slate-500 mt-0.5 max-w-[220px] font-semibold leading-tight">
                   게임이 시작되면 16개 미션이 무작위로 섞이며 2시간 타이머가 돌아갑니다!
                 </p>
 
                 {currentUser.canStartGame ? (
                   <button
                     onClick={startGame}
-                    className="mt-4 px-6 py-3.5 rounded-2xl bg-linear-to-r from-orange-400 via-rose-400 to-amber-400 hover:opacity-95 active:scale-95 text-white font-black text-base tracking-wide shadow-lg shadow-orange-500/25 flex items-center gap-2 font-jua transition-all"
+                    className="mt-3 px-5 py-2.5 rounded-xl bg-linear-to-r from-orange-400 via-rose-400 to-amber-400 hover:opacity-95 active:scale-95 text-white font-black text-sm tracking-wide shadow-md shadow-orange-500/25 flex items-center gap-1.5 font-jua transition-all"
                   >
-                    <Play className="w-5 h-5 fill-current" />
+                    <Play className="w-4 h-4 fill-current" />
                     <span>🚀 게임 시작하기!</span>
                   </button>
                 ) : (
-                  <div className="mt-4 px-4 py-2.5 rounded-2xl bg-orange-50 border-2 border-orange-200 text-xs text-orange-800 font-bold flex items-center gap-2">
-                    <span className="w-2.5 h-2.5 rounded-full bg-orange-500 animate-ping" />
+                  <div className="mt-3 px-3 py-1.5 rounded-xl bg-orange-50 border border-orange-200 text-[10px] text-orange-800 font-bold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-orange-500 animate-ping" />
                     <span>주최자의 게임 시작 신호를 기다리고 있습니다... ⏳</span>
                   </div>
                 )}
@@ -188,8 +188,8 @@ export function App() {
 
             {/* 준비~ 시작! 카운트다운 */}
             {countdownText && (
-              <div className="absolute inset-0 z-40 bg-white/95 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center animate-in fade-in zoom-in-75 duration-200 border-4 border-orange-300">
-                <span className="text-4xl md:text-5xl font-black text-orange-500 font-jua tracking-wider animate-pulse drop-shadow-md">
+              <div className="absolute inset-0 z-40 bg-white/95 backdrop-blur-md rounded-2xl flex flex-col items-center justify-center animate-in fade-in zoom-in-75 duration-200 border-2 border-orange-300">
+                <span className="text-3xl font-black text-orange-500 font-jua tracking-wider animate-pulse drop-shadow-sm">
                   {countdownText}
                 </span>
               </div>
@@ -197,20 +197,17 @@ export function App() {
 
             {/* 셔플 연출 */}
             {isShufflingEffect && (
-              <div className="absolute inset-0 z-30 bg-white/90 backdrop-blur-xs rounded-3xl flex flex-col items-center justify-center gap-2 border-4 border-orange-200">
-                <Sparkles className="w-8 h-8 text-amber-500 animate-spin" />
-                <span className="font-jua text-lg font-black text-slate-800 animate-pulse">
+              <div className="absolute inset-0 z-30 bg-white/90 backdrop-blur-xs rounded-2xl flex flex-col items-center justify-center gap-1.5 border-2 border-orange-200">
+                <Sparkles className="w-6 h-6 text-amber-500 animate-spin" />
+                <span className="font-jua text-sm font-black text-slate-800 animate-pulse">
                   미션 슈루루루루 셔플 중... 🎲
-                </span>
-                <span className="text-xs text-slate-500 font-bold">
-                  양 팀의 판이 무작위로 섞입니다!
                 </span>
               </div>
             )}
 
             {/* 4x4 빙고 그리드 */}
             <div
-              className={`w-full h-full grid grid-cols-4 grid-rows-4 gap-1.5 p-2 bg-orange-50/70 border-2 border-orange-200/80 rounded-3xl transition-transform ${
+              className={`w-full h-full grid grid-cols-4 grid-rows-4 gap-1 p-1 bg-orange-50/70 border border-orange-200/80 rounded-2xl transition-transform ${
                 isCurrentBoardShaking ? 'animate-shake' : ''
               }`}
             >
@@ -225,25 +222,25 @@ export function App() {
             </div>
           </div>
 
-          {/* 하단 바 (채팅 & 룰 & 리셋) */}
-          <div className="flex items-center justify-between gap-2 pt-1 pb-1 shrink-0">
+          {/* 하단 바 */}
+          <div className="flex items-center justify-between gap-1.5 pt-0.5 pb-1 shrink-0">
             <button
               onClick={() => setShowRuleModal(true)}
-              className="flex-1 py-1.5 px-3 bg-white border-2 border-orange-200 hover:bg-orange-50 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs font-jua"
+              className="flex-1 py-1.5 px-2 bg-white border border-orange-200 hover:bg-orange-50 text-slate-700 rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 shadow-2xs font-jua"
             >
-              <HelpCircle className="w-3.5 h-3.5 text-orange-500" />
+              <HelpCircle className="w-3 h-3 text-orange-500" />
               <span>포토빙고 룰</span>
             </button>
 
-            {/* 실시간 채팅 버튼 & 안 읽은 메시지 뱃지 */}
+            {/* 실시간 채팅 버튼 & 안 읽은 카운트 */}
             <button
               onClick={handleOpenChat}
-              className="relative py-1.5 px-3.5 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-md shadow-orange-500/20 font-jua transition-all"
+              className="relative py-1.5 px-3 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white rounded-xl text-[10px] font-black flex items-center gap-1 shadow-xs font-jua transition-all"
             >
-              <MessageCircle className="w-4 h-4 fill-current" />
+              <MessageCircle className="w-3 h-3 fill-current" />
               <span>채팅톡</span>
               {unreadChatCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full border-2 border-white animate-bounce font-mono">
+                <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[8px] font-black px-1 rounded-full border border-white animate-bounce font-mono">
                   {unreadChatCount}
                 </span>
               )}
@@ -256,10 +253,10 @@ export function App() {
                     resetGame();
                   }
                 }}
-                className="py-1.5 px-2.5 bg-white border-2 border-slate-200 hover:bg-rose-50 text-slate-400 hover:text-rose-500 rounded-xl text-[11px] font-semibold flex items-center gap-1 shadow-2xs"
+                className="py-1.5 px-2 bg-white border border-slate-200 hover:bg-rose-50 text-slate-400 hover:text-rose-500 rounded-xl text-[10px] font-semibold flex items-center gap-0.5 shadow-2xs"
                 title="게임 및 채팅 초기화"
               >
-                <RotateCcw className="w-3 h-3" />
+                <RotateCcw className="w-2.5 h-2.5" />
                 <span>리셋</span>
               </button>
             )}
@@ -276,7 +273,7 @@ export function App() {
         currentUser={currentUser}
       />
 
-      {/* 상대팀 사진 심사(인정 / 노인정 과반 투표) 모달 */}
+      {/* 상대팀 사진 심사 모달 */}
       <ReviewModal
         isOpen={gameState.phase === 'REVIEWING'}
         candidateTeam={candidateTeamState}
@@ -313,13 +310,13 @@ export function App() {
 
       {/* 룰 모달 */}
       {showRuleModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl border-3 border-orange-200">
-            <h3 className="text-sm font-black text-slate-800 font-jua mb-3 flex items-center gap-1.5">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-sm bg-white rounded-3xl p-4 shadow-2xl border-2 border-orange-200">
+            <h3 className="text-xs font-black text-slate-800 font-jua mb-2 flex items-center gap-1">
               <span>📖</span>
               <span>스위칭 데이 포토빙고 룰</span>
             </h3>
-            <ul className="text-xs text-slate-600 space-y-2 leading-relaxed">
+            <ul className="text-[10px] text-slate-600 space-y-1.5 leading-relaxed font-semibold">
               <li>⏱️ <strong>제한 시간</strong>: 시작 후 2시간 동안 진행됩니다.</li>
               <li>🏆 <strong>승리 조건</strong>: 4x4 칸 중 <strong>3줄</strong>을 먼저 완성하는 팀!</li>
               <li>⚖️ <strong>상대팀 심사</strong>: 3줄 달성 시 상대팀이 등록된 사진을 심사하여 <strong>과반수(3표 이상) 인정</strong>을 받아야 최종 우승! (노인정 과반수 시 탈락 및 재도전)</li>
@@ -327,7 +324,7 @@ export function App() {
             </ul>
             <button
               onClick={() => setShowRuleModal(false)}
-              className="mt-4 w-full py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-bold font-jua"
+              className="mt-3 w-full py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-[11px] font-bold font-jua"
             >
               확인 완료!
             </button>

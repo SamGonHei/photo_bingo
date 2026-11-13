@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: './', // 상대 경로로 지정하여 GitHub Pages 및 로컬 어디서나 에셋 완벽 로드
+  base: './',
   plugins: [
     react(),
     tailwindcss(),
@@ -12,5 +12,13 @@ export default defineConfig({
   server: {
     host: true,
     port: 3000,
+    proxy: {
+      // 모바일에서 3000번 포트 하나로 웹소켓까지 통과
+      '/ws': {
+        target: 'ws://localhost:3001',
+        ws: true,
+        rewriteWsOrigin: true,
+      },
+    },
   },
 })
