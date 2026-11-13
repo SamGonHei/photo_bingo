@@ -98,7 +98,7 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
           </div>
 
           <div className="w-full text-center px-0.5">
-            <div className="text-[10.5px] sm:text-xs font-black text-slate-800 leading-snug line-clamp-2 font-jua tracking-tight">
+            <div className="text-xs sm:text-[13px] font-black text-slate-800 leading-snug line-clamp-2 font-jua tracking-tight drop-shadow-2xs">
               {cell.mission.title}
             </div>
           </div>

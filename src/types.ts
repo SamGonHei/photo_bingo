@@ -64,6 +64,7 @@ export interface GameState {
   durationSeconds: number; // 7200초 (2시간)
   winnerTeam?: TeamId | null;
   candidateTeam?: TeamId | null; // 3줄 달성하여 심사받는 팀
+  reviewStartTime?: number | null; // 심사 시작 ms (10분 카운트다운용)
   teamA: TeamState;
   teamB: TeamState;
   messages: ChatMessage[];

@@ -72,6 +72,7 @@ function MainApp() {
   const [expiredNotice, setExpiredNotice] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [isReviewDismissed, setIsReviewDismissed] = useState(false);
 
   // 세션 로드 및 만료 체크
   useEffect(() => {
@@ -121,6 +122,13 @@ function MainApp() {
     useShuffleOpponentBoard,
     sendChatMessage,
   } = usePhotoBingo(currentUser);
+
+  // 심사 단계 종료 시 dismiss 리셋
+  useEffect(() => {
+    if (gameState.phase !== 'REVIEWING') {
+      setIsReviewDismissed(false);
+    }
+  }, [gameState.phase]);
 
   // 안 읽은 메시지 카운트
   const prevMsgLength = useRef(gameState.messages?.length ?? 0);
@@ -197,6 +205,22 @@ function MainApp() {
           isStarted={gameState.isStarted}
           onLogout={handleLogout}
         />
+
+        {/* 심사 중 나가기 시 상단 플로팅 배너 */}
+        {gameState.phase === 'REVIEWING' && isReviewDismissed && (
+          <div
+            onClick={() => setIsReviewDismissed(false)}
+            className="w-full bg-linear-to-r from-amber-500 via-orange-500 to-rose-500 text-white px-3 py-1.5 flex items-center justify-between cursor-pointer shadow-md animate-pulse shrink-0 font-jua select-none"
+          >
+            <div className="flex items-center gap-1.5 text-xs font-black">
+              <span>⚖️</span>
+              <span>[심사 진행 중] 10분 타이머 작동 중!</span>
+            </div>
+            <span className="text-[10px] bg-white text-rose-600 px-2 py-0.5 rounded-full font-black shadow-xs">
+              심사창 다시 열기 &gt;
+            </span>
+          </div>
+        )}
 
         {/* 메인 영역 */}
         <main className="flex-1 min-h-0 flex flex-col px-2 py-0.5 overflow-hidden justify-between">
@@ -330,10 +354,12 @@ function MainApp() {
 
       {/* 상대팀 사진 심사 모달 */}
       <ReviewModal
-        isOpen={gameState.phase === 'REVIEWING'}
+        isOpen={gameState.phase === 'REVIEWING' && !isReviewDismissed}
         candidateTeam={candidateTeamState}
         currentUser={currentUser}
+        reviewStartTime={gameState.reviewStartTime}
         onVote={voteMission}
+        onClose={() => setIsReviewDismissed(true)}
       />
 
       {/* 최종 승리 축하 모달 */}
