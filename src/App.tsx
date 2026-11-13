@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { usePhotoBingo } from './hooks/usePhotoBingo';
-import { usePhotoBingoChat } from './hooks/usePhotoBingoChat';
 import { Header } from './components/Header';
 import { SkillControls } from './components/SkillControls';
 import { BingoCard } from './components/BingoCard';
 import { PhotoUploadModal } from './components/PhotoUploadModal';
 import { PhotoDetailModal } from './components/PhotoDetailModal';
 import { GameOverModal } from './components/GameOverModal';
+import { ReviewModal } from './components/ReviewModal';
 import { LoginScreen } from './components/LoginScreen';
 import { ChatDrawer } from './components/ChatDrawer';
 import { getCurrentUser, loginUser, logoutUser } from './utils/auth';
@@ -17,16 +17,13 @@ export function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [expiredNotice, setExpiredNotice] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
 
-  // 세션 로드 및 3시간 주기 체크
+  // 세션 로드 및 만료 체크
   useEffect(() => {
     const { user, isExpired } = getCurrentUser();
-    if (isExpired) {
-      setExpiredNotice(true);
-    }
-    if (user) {
-      setCurrentUser(user);
-    }
+    if (isExpired) setExpiredNotice(true);
+    if (user) setCurrentUser(user);
 
     const interval = setInterval(() => {
       const check = getCurrentUser();
@@ -65,12 +62,29 @@ export function App() {
     startGame,
     resetGame,
     completeMission,
+    voteMission,
     useInkAttack,
     useShuffleOpponentBoard,
+    sendChatMessage,
   } = usePhotoBingo(currentUser);
 
-  // 채팅 훅
-  const { messages, sendMessage, clearChat } = usePhotoBingoChat(gameState.startTime);
+  // 안 읽은 메시지 카운트 관리
+  const prevMsgLength = useRef(gameState.messages?.length ?? 0);
+  useEffect(() => {
+    const currentLength = gameState.messages?.length ?? 0;
+    if (currentLength > prevMsgLength.current) {
+      const diff = currentLength - prevMsgLength.current;
+      if (!isChatOpen) {
+        setUnreadChatCount((prev) => prev + diff);
+      }
+    }
+    prevMsgLength.current = currentLength;
+  }, [gameState.messages, isChatOpen]);
+
+  const handleOpenChat = () => {
+    setIsChatOpen(true);
+    setUnreadChatCount(0);
+  };
 
   const [selectedCell, setSelectedCell] = useState<{ cell: BingoCell; index: number } | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
@@ -82,7 +96,11 @@ export function App() {
       alert('아직 게임이 시작되지 않았습니다! 시작 신호를 기다려주세요 🐥');
       return;
     }
-    if (gameState.winnerTeam) {
+    if (gameState.phase === 'REVIEWING') {
+      alert('현재 심사 단계가 진행 중입니다!');
+      return;
+    }
+    if (gameState.phase === 'FINISHED') {
       alert('게임이 종료되었습니다!');
       return;
     }
@@ -105,21 +123,15 @@ export function App() {
     setIsUploadModalOpen(true);
   };
 
-  // 게임 리셋 시 채팅도 리셋
-  const handleResetWithChat = () => {
-    resetGame();
-    clearChat();
-  };
-
   if (!currentUser) {
     return <LoginScreen onLogin={handleLogin} expiredNotice={expiredNotice} />;
   }
 
   const isCurrentBoardShaking = boardShakeTeam === currentUser.teamId;
+  const candidateTeamState = gameState.candidateTeam ? gameState[gameState.candidateTeam] : null;
 
   return (
     <div className="h-dvh h-screen w-full bg-[#FFFDF7] flex flex-col items-center justify-center overflow-hidden select-none">
-      {/* 모바일 화면 컨테이너 (스크롤 0 최적화) */}
       <div className="w-full max-w-md h-full flex flex-col bg-[#FFFDF7] shadow-xl border-x border-orange-100 relative overflow-hidden">
         {/* 상단 파스텔 헤더 */}
         <Header
@@ -131,9 +143,9 @@ export function App() {
           onLogout={handleLogout}
         />
 
-        {/* 메인 영역 */}
+        {/* 메인 영역: 스크롤 0px 고정 */}
         <main className="flex-1 min-h-0 flex flex-col px-3 py-1 overflow-hidden">
-          {/* 스페셜 스킬 컨트롤 */}
+          {/* 스페셜 스킬 */}
           <SkillControls
             currentUser={currentUser}
             currentTeam={currentTeam}
@@ -142,9 +154,9 @@ export function App() {
             onUseShuffleBoard={useShuffleOpponentBoard}
           />
 
-          {/* 빙고판 영역: 남은 높이를 꽉 채우는 4x4 그리드 */}
+          {/* 4x4 빙고 그리드 컨테이너 */}
           <div className="flex-1 min-h-0 w-full relative my-1">
-            {/* 1. 시작 전 귀여운 대기실 화면 */}
+            {/* 시작 전 대기실 */}
             {!gameState.isStarted && !isShufflingEffect && !countdownText && (
               <div className="absolute inset-0 z-10 bg-white/95 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center p-5 text-center border-3 border-orange-200 shadow-xl">
                 <div className="w-14 h-14 rounded-3xl bg-orange-100 border-2 border-orange-200 flex items-center justify-center mb-2 animate-bounce">
@@ -174,7 +186,7 @@ export function App() {
               </div>
             )}
 
-            {/* 2. '준비~ 시작!' 카운트다운 연출 */}
+            {/* 준비~ 시작! 카운트다운 */}
             {countdownText && (
               <div className="absolute inset-0 z-40 bg-white/95 backdrop-blur-md rounded-3xl flex flex-col items-center justify-center animate-in fade-in zoom-in-75 duration-200 border-4 border-orange-300">
                 <span className="text-4xl md:text-5xl font-black text-orange-500 font-jua tracking-wider animate-pulse drop-shadow-md">
@@ -183,7 +195,7 @@ export function App() {
               </div>
             )}
 
-            {/* 3. 슈루루루루 셔플 모션 연출 */}
+            {/* 셔플 연출 */}
             {isShufflingEffect && (
               <div className="absolute inset-0 z-30 bg-white/90 backdrop-blur-xs rounded-3xl flex flex-col items-center justify-center gap-2 border-4 border-orange-200">
                 <Sparkles className="w-8 h-8 text-amber-500 animate-spin" />
@@ -196,7 +208,7 @@ export function App() {
               </div>
             )}
 
-            {/* 4x4 그리드 */}
+            {/* 4x4 빙고 그리드 */}
             <div
               className={`w-full h-full grid grid-cols-4 grid-rows-4 gap-1.5 p-2 bg-orange-50/70 border-2 border-orange-200/80 rounded-3xl transition-transform ${
                 isCurrentBoardShaking ? 'animate-shake' : ''
@@ -213,30 +225,35 @@ export function App() {
             </div>
           </div>
 
-          {/* 하단 유틸 바 */}
+          {/* 하단 바 (채팅 & 룰 & 리셋) */}
           <div className="flex items-center justify-between gap-2 pt-1 pb-1 shrink-0">
             <button
               onClick={() => setShowRuleModal(true)}
               className="flex-1 py-1.5 px-3 bg-white border-2 border-orange-200 hover:bg-orange-50 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shadow-2xs font-jua"
             >
               <HelpCircle className="w-3.5 h-3.5 text-orange-500" />
-              <span>포토빙고 룰 안내</span>
+              <span>포토빙고 룰</span>
             </button>
 
-            {/* 채팅 열기 버튼 */}
+            {/* 실시간 채팅 버튼 & 안 읽은 메시지 뱃지 */}
             <button
-              onClick={() => setIsChatOpen(true)}
-              className="py-1.5 px-3.5 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-md shadow-orange-500/20 font-jua transition-all"
+              onClick={handleOpenChat}
+              className="relative py-1.5 px-3.5 bg-orange-500 hover:bg-orange-600 active:scale-95 text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-md shadow-orange-500/20 font-jua transition-all"
             >
               <MessageCircle className="w-4 h-4 fill-current" />
-              <span>채팅톡 ({messages.length})</span>
+              <span>채팅톡</span>
+              {unreadChatCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 bg-rose-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full border-2 border-white animate-bounce font-mono">
+                  {unreadChatCount}
+                </span>
+              )}
             </button>
 
             {currentUser.canStartGame && (
               <button
                 onClick={() => {
                   if (confirm('⚠️ [주최자 권한] 게임 및 채팅을 초기화하시겠습니까?')) {
-                    handleResetWithChat();
+                    resetGame();
                   }
                 }}
                 className="py-1.5 px-2.5 bg-white border-2 border-slate-200 hover:bg-rose-50 text-slate-400 hover:text-rose-500 rounded-xl text-[11px] font-semibold flex items-center gap-1 shadow-2xs"
@@ -250,22 +267,30 @@ export function App() {
         </main>
       </div>
 
-      {/* 채팅 바텀시트 드로어 */}
+      {/* 실시간 전체 채팅창 */}
       <ChatDrawer
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
-        messages={messages}
-        onSendMessage={(text) =>
-          sendMessage(
-            currentUser.id,
-            currentUser.name,
-            currentUser.teamId,
-            currentUser.teamName,
-            currentUser.isLeader,
-            text
-          )
-        }
+        messages={gameState.messages || []}
+        onSendMessage={sendChatMessage}
         currentUser={currentUser}
+      />
+
+      {/* 상대팀 사진 심사(인정 / 노인정 과반 투표) 모달 */}
+      <ReviewModal
+        isOpen={gameState.phase === 'REVIEWING'}
+        candidateTeam={candidateTeamState}
+        currentUser={currentUser}
+        onVote={voteMission}
+      />
+
+      {/* 최종 승리 축하 모달 */}
+      <GameOverModal
+        winnerTeam={gameState.winnerTeam ?? null}
+        teamA={gameState.teamA}
+        teamB={gameState.teamB}
+        isOpen={gameState.phase === 'FINISHED' && Boolean(gameState.winnerTeam)}
+        onRestart={resetGame}
       />
 
       {/* 사진 업로드 모달 */}
@@ -286,16 +311,7 @@ export function App() {
         onRetake={handleRetake}
       />
 
-      {/* 승리 축하 모달 */}
-      <GameOverModal
-        winnerTeam={gameState.winnerTeam ?? null}
-        teamA={gameState.teamA}
-        teamB={gameState.teamB}
-        isOpen={Boolean(gameState.winnerTeam)}
-        onRestart={handleResetWithChat}
-      />
-
-      {/* 게임 규칙 팝업 */}
+      {/* 룰 모달 */}
       {showRuleModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
           <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl border-3 border-orange-200">
@@ -305,14 +321,9 @@ export function App() {
             </h3>
             <ul className="text-xs text-slate-600 space-y-2 leading-relaxed">
               <li>⏱️ <strong>제한 시간</strong>: 시작 후 2시간 동안 진행됩니다.</li>
-              <li>🏆 <strong>승리 조건</strong>: 4x4 칸 중 <strong>3줄</strong>을 먼저 완성하는 팀 즉시 승리!</li>
-              <li>🎁 <strong>경품</strong>: 승리 팀에게는 엄청난 경품이 기다리고 있습니다!</li>
-              <li>📸 <strong>사진 등록</strong>: 팀원 누구나 해당 칸을 눌러 사진 촬영 또는 갤러리 업로드 가능합니다.</li>
-              <li>👑 <strong>팀장 스킬</strong>: 
-                <br />- <strong>먹물 투척 (2회)</strong>: 상대팀 칸 2개를 3분간 가리고 등록 차단
-                <br />- <strong>판 흔들기 (1회)</strong>: 상대팀 빙고판 전체를 랜덤 셔플
-              </li>
-              <li>💬 <strong>채팅톡</strong>: 하단 채팅톡 버튼을 눌러 팀원들과 실시간 대화를 나눠보세요! (게임 리셋 시 초기화)</li>
+              <li>🏆 <strong>승리 조건</strong>: 4x4 칸 중 <strong>3줄</strong>을 먼저 완성하는 팀!</li>
+              <li>⚖️ <strong>상대팀 심사</strong>: 3줄 달성 시 상대팀이 등록된 사진을 심사하여 <strong>과반수(3표 이상) 인정</strong>을 받아야 최종 우승! (노인정 과반수 시 탈락 및 재도전)</li>
+              <li>💬 <strong>통합 채팅</strong>: 하단 채팅톡에서 전원 실시간 대화가 가능하며 안 읽은 메시지가 숫자로 표시됩니다.</li>
             </ul>
             <button
               onClick={() => setShowRuleModal(false)}

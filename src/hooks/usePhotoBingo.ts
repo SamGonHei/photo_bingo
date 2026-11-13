@@ -9,31 +9,25 @@ import {
 } from '../utils/bingo';
 import confetti from 'canvas-confetti';
 
-const STORAGE_KEY = 'photo_bingo_game_state_v2';
-const GAME_DURATION_SECONDS = 7200; // 2시간
-const INK_DURATION_MS = 180 * 1000; // 3분
+const INK_DURATION_MS = 180 * 1000;
 
 function getInitialGameState(): GameState {
-  const teamACells = createShuffledCells(INITIAL_MISSIONS);
-  const teamBCells = createShuffledCells(INITIAL_MISSIONS);
-
   return {
+    phase: 'WAITING',
     isStarted: false,
-    durationSeconds: GAME_DURATION_SECONDS,
+    durationSeconds: 7200,
     winnerTeam: null,
+    candidateTeam: null,
     teamA: {
       id: 'teamA',
       name: 'jackie팀',
       leaderId: 'jackie',
       badge: '👑',
       members: ['jackie', 'hannah', 'nicole', 'sam', 'tori'],
-      themeColor: '#4F46E5', // 인디고/바이올렛 톤
-      cells: teamACells,
+      themeColor: '#4F46E5',
+      cells: createShuffledCells(INITIAL_MISSIONS),
       completedLines: 0,
-      skills: {
-        inkAttack: 2,
-        shuffleBoard: 1,
-      },
+      skills: { inkAttack: 2, shuffleBoard: 1 },
     },
     teamB: {
       id: 'teamB',
@@ -41,83 +35,103 @@ function getInitialGameState(): GameState {
       leaderId: 'carol',
       badge: '🎀',
       members: ['carol', 'raphaela', 'popo', 'lumi', 'jane'],
-      themeColor: '#EC4899', // 핑크/로즈 톤
-      cells: teamBCells,
+      themeColor: '#EC4899',
+      cells: createShuffledCells(INITIAL_MISSIONS),
       completedLines: 0,
-      skills: {
-        inkAttack: 2,
-        shuffleBoard: 1,
-      },
+      skills: { inkAttack: 2, shuffleBoard: 1 },
     },
+    messages: [],
   };
 }
 
 export function usePhotoBingo(currentUser: UserProfile | null) {
-  const [gameState, setGameState] = useState<GameState>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {
-      // ignore
-    }
-    return getInitialGameState();
-  });
-
-  const [remainingTime, setRemainingTime] = useState<number>(GAME_DURATION_SECONDS);
+  const [gameState, setGameState] = useState<GameState>(getInitialGameState);
+  const [remainingTime, setRemainingTime] = useState<number>(7200);
   const [countdownText, setCountdownText] = useState<string | null>(null);
   const [isShufflingEffect, setIsShufflingEffect] = useState(false);
   const [boardShakeTeam, setBoardShakeTeam] = useState<TeamId | null>(null);
 
-  // 로컬스토리지 동기화
+  const socketRef = useRef<WebSocket | null>(null);
+
+  // 웹소켓 연결 (호스트네임 동적 감지: PC/모바일 동일 포트 3001)
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
-    } catch (e) {
-      console.error('Failed to save gameState', e);
+    const host = window.location.hostname || 'localhost';
+    const wsUrl = `ws://${host}:3001`;
+
+    let ws: WebSocket;
+    const connect = () => {
+      try {
+        ws = new WebSocket(wsUrl);
+        socketRef.current = ws;
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'SYNC_STATE') {
+              setGameState(data.payload);
+            } else if (data.type === 'COUNTDOWN_START') {
+              // 모든 기기에서 동시 카운트다운 연출
+              setCountdownText('준비~');
+              setTimeout(() => {
+                setCountdownText('시작! 🚀');
+                setTimeout(() => {
+                  setCountdownText(null);
+                  setIsShufflingEffect(true);
+                  setTimeout(() => setIsShufflingEffect(false), 800);
+                }, 600);
+              }, 800);
+            } else if (data.type === 'NEW_CHAT') {
+              setGameState((prev) => ({
+                ...prev,
+                messages: [...prev.messages, data.payload],
+              }));
+            }
+          } catch (e) {
+            console.error('WS Parse error', e);
+          }
+        };
+
+        ws.onclose = () => {
+          setTimeout(connect, 2000); // 자동 재연결
+        };
+      } catch (err) {
+        console.error('WS Connection error', err);
+      }
+    };
+
+    connect();
+
+    return () => {
+      if (ws) ws.close();
+    };
+  }, []);
+
+  const sendWs = useCallback((type: string, payload: unknown) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type, payload }));
     }
-  }, [gameState]);
+  }, []);
 
   // 2시간 타이머
   useEffect(() => {
-    if (!gameState.isStarted || !gameState.startTime || gameState.winnerTeam) {
-      return;
-    }
+    if (!gameState.isStarted || !gameState.startTime || gameState.winnerTeam) return;
 
     const interval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - gameState.startTime!) / 1000);
-      const remaining = Math.max(0, gameState.durationSeconds - elapsed);
-      setRemainingTime(remaining);
-
-      if (remaining <= 0 && !gameState.winnerTeam) {
-        const teamALines = calculateCompletedLines(gameState.teamA.cells);
-        const teamBLines = calculateCompletedLines(gameState.teamB.cells);
-        let winner: TeamId | null = null;
-        if (teamALines > teamBLines) winner = 'teamA';
-        else if (teamBLines > teamALines) winner = 'teamB';
-
-        setGameState((prev) => ({
-          ...prev,
-          winnerTeam: winner,
-        }));
-      }
+      const rem = Math.max(0, gameState.durationSeconds - elapsed);
+      setRemainingTime(rem);
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [gameState.isStarted, gameState.startTime, gameState.durationSeconds, gameState.winnerTeam, gameState.teamA.cells, gameState.teamB.cells]);
+  }, [gameState.isStarted, gameState.startTime, gameState.durationSeconds, gameState.winnerTeam]);
 
-  // 승리 폭죽 연출
+  // 승리 폭죽
   const hasTriggeredConfetti = useRef(false);
   useEffect(() => {
     if (gameState.winnerTeam && !hasTriggeredConfetti.current) {
       hasTriggeredConfetti.current = true;
       try {
         confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
-        setTimeout(() => {
-          confetti({ particleCount: 100, angle: 60, spread: 60, origin: { x: 0 } });
-          confetti({ particleCount: 100, angle: 120, spread: 60, origin: { x: 1 } });
-        }, 300);
       } catch {
         // ignore
       }
@@ -126,233 +140,261 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     }
   }, [gameState.winnerTeam]);
 
-  // 게임 시작: '준비~ 시작!' 카운트다운 후 슈루루루 셔플 모션 & 2시간 개시
+  // 게임 시작 (오직 sam만)
   const startGame = useCallback(() => {
-    if (!currentUser) return;
-    if (!currentUser.canStartGame) {
+    if (!currentUser?.canStartGame) {
       alert('⚠️ 게임 시작은 주최자(SAM)만 누를 수 있습니다!');
       return;
     }
+    sendWs('START_GAME', {});
+  }, [currentUser, sendWs]);
 
-    // 1단계: "준비~"
-    setCountdownText('준비~');
-    setTimeout(() => {
-      // 2단계: "시작! 🚀"
-      setCountdownText('시작! 🚀');
-
-      setTimeout(() => {
-        setCountdownText(null);
-        setIsShufflingEffect(true);
-
-        // 3단계: 빙고판 슈루루루루 돌아가는 모션 (10회 고속 셔플)
-        let shuffleCount = 0;
-        const shuffleInterval = setInterval(() => {
-          setGameState((prev) => ({
-            ...prev,
-            teamA: { ...prev.teamA, cells: createShuffledCells(INITIAL_MISSIONS) },
-            teamB: { ...prev.teamB, cells: createShuffledCells(INITIAL_MISSIONS) },
-          }));
-          shuffleCount++;
-          if (shuffleCount >= 10) {
-            clearInterval(shuffleInterval);
-            setIsShufflingEffect(false);
-
-            // 4단계: 챡! 최종 랜덤 배치 확정 및 2시간 타이머 시작
-            const finalTeamACells = createShuffledCells(INITIAL_MISSIONS);
-            const finalTeamBCells = createShuffledCells(INITIAL_MISSIONS);
-
-            setGameState((prev) => ({
-              ...prev,
-              isStarted: true,
-              startTime: Date.now(),
-              winnerTeam: null,
-              teamA: {
-                ...prev.teamA,
-                cells: finalTeamACells,
-                completedLines: 0,
-                skills: { inkAttack: 2, shuffleBoard: 1 },
-              },
-              teamB: {
-                ...prev.teamB,
-                cells: finalTeamBCells,
-                completedLines: 0,
-                skills: { inkAttack: 2, shuffleBoard: 1 },
-              },
-            }));
-          }
-        }, 100);
-      }, 700);
-    }, 900);
-  }, [currentUser]);
-
-  // 게임 초기화
+  // 게임 리셋
   const resetGame = useCallback(() => {
-    const initialState = getInitialGameState();
-    setGameState(initialState);
-    setRemainingTime(GAME_DURATION_SECONDS);
-    localStorage.removeItem(STORAGE_KEY);
-  }, []);
+    sendWs('RESET_GAME', {});
+  }, [sendWs]);
 
-  // 미션 사진 등록 (팀원 전원 가능)
+  // 미션 사진 등록
   const completeMission = useCallback((positionIndex: number, photoUrl: string) => {
     if (!currentUser) return;
     const teamKey = currentUser.teamId;
+    const currentTeam = gameState[teamKey];
+    const targetCell = currentTeam.cells[positionIndex];
 
-    setGameState((prev) => {
-      if (!prev.isStarted || prev.winnerTeam) return prev;
+    if (isCellInked(targetCell)) {
+      alert('🦑 먹물에 덮여 있어 아직 등록할 수 없습니다!');
+      return;
+    }
 
-      const currentTeam = prev[teamKey];
-      const targetCell = currentTeam.cells[positionIndex];
-
-      if (isCellInked(targetCell)) {
-        alert('🦑 먹물에 뒤덮여 있어 현재 등록할 수 없습니다! (남은 시간을 확인해주세요)');
-        return prev;
+    const updatedCells = currentTeam.cells.map((cell, idx) => {
+      if (idx === positionIndex) {
+        return {
+          ...cell,
+          isCompleted: true,
+          photoUrl,
+          completedAt: Date.now(),
+          completedBy: currentUser.id,
+          reviewStatus: 'PENDING' as const,
+          approvedUsers: [],
+          rejectedUsers: [],
+        };
       }
-
-      const updatedCells = currentTeam.cells.map((cell, idx) => {
-        if (idx === positionIndex) {
-          return {
-            ...cell,
-            isCompleted: true,
-            photoUrl,
-            completedAt: Date.now(),
-            completedBy: currentUser.id,
-          };
-        }
-        return cell;
-      });
-
-      const newCompletedLines = calculateCompletedLines(updatedCells);
-      let winner: TeamId | null = prev.winnerTeam ?? null;
-
-      if (newCompletedLines >= 3 && !winner) {
-        winner = teamKey;
-      }
-
-      return {
-        ...prev,
-        winnerTeam: winner,
-        [teamKey]: {
-          ...currentTeam,
-          cells: updatedCells,
-          completedLines: newCompletedLines,
-        },
-      };
+      return cell;
     });
-  }, [currentUser]);
 
-  // 스킬 1: 먹물 투척 (오직 팀장 jackie, carol만 가능)
+    const newCompletedLines = calculateCompletedLines(updatedCells);
+    let nextPhase = gameState.phase;
+    let candidate = gameState.candidateTeam;
+
+    // 3줄 빙고 달성 시 즉시 심사(REVIEWING) 단계 돌입!
+    if (newCompletedLines >= 3 && gameState.phase === 'PLAYING') {
+      nextPhase = 'REVIEWING';
+      candidate = teamKey;
+      alert(`🎉 [${currentTeam.name} 3줄 달성!] 상대팀의 심사(인정/노인정 투표)가 시작됩니다!`);
+    }
+
+    const nextState: Partial<GameState> = {
+      phase: nextPhase,
+      candidateTeam: candidate,
+      [teamKey]: {
+        ...currentTeam,
+        cells: updatedCells,
+        completedLines: newCompletedLines,
+      },
+    };
+
+    sendWs('UPDATE_STATE', nextState);
+  }, [currentUser, gameState, sendWs]);
+
+  // 심사 투표 (인정 / 노인정)
+  const voteMission = useCallback((positionIndex: number, isApprove: boolean) => {
+    if (!currentUser || !gameState.candidateTeam) return;
+
+    // 투표자는 반드시 상대팀이어야 함
+    const targetTeamKey = gameState.candidateTeam;
+    if (currentUser.teamId === targetTeamKey) {
+      alert('⚠️ 본인 팀의 사진에는 투표할 수 없습니다. 상대팀이 심사합니다!');
+      return;
+    }
+
+    const targetTeam = gameState[targetTeamKey];
+    const targetCell = targetTeam.cells[positionIndex];
+    if (!targetCell || !targetCell.isCompleted) return;
+
+    const voterId = currentUser.id;
+    let approved = targetCell.approvedUsers ? [...targetCell.approvedUsers] : [];
+    let rejected = targetCell.rejectedUsers ? [...targetCell.rejectedUsers] : [];
+
+    // 기존 표 제거
+    approved = approved.filter((id) => id !== voterId);
+    rejected = rejected.filter((id) => id !== voterId);
+
+    if (isApprove) {
+      approved.push(voterId);
+    } else {
+      rejected.push(voterId);
+    }
+
+    let reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED' = 'PENDING';
+    let isCompleted: boolean = targetCell.isCompleted;
+
+    // 과반수 기준: 상대팀 인원 5명 중 3명 이상
+    if (rejected.length >= 3) {
+      reviewStatus = 'REJECTED';
+      isCompleted = false; // 노인정 과반수로 탈락!
+    } else if (approved.length >= 3) {
+      reviewStatus = 'APPROVED';
+    }
+
+    const updatedCells = targetTeam.cells.map((c, idx) => {
+      if (idx === positionIndex) {
+        return {
+          ...c,
+          approvedUsers: approved,
+          rejectedUsers: rejected,
+          reviewStatus,
+          isCompleted,
+        };
+      }
+      return c;
+    });
+
+    const newCompletedLines = calculateCompletedLines(updatedCells);
+    let nextPhase = gameState.phase;
+    let winner = gameState.winnerTeam;
+
+    if (newCompletedLines < 3 && rejected.length >= 3) {
+      // 3줄이 깨졌으므로 다시 게임 모드로 복귀
+      nextPhase = 'PLAYING';
+      alert(`❌ [노인정 과반수!] #${positionIndex + 1}번 미션이 탈락하여 3줄 빙고가 취소되었습니다!`);
+    } else {
+      // 심사 대상 칸들이 모두 과반 인정받았는지 체크
+      const completedCells = updatedCells.filter((c) => c.isCompleted);
+      const allApproved = completedCells.every((c) => (c.approvedUsers?.length ?? 0) >= 3);
+      if (allApproved && newCompletedLines >= 3) {
+        nextPhase = 'FINISHED';
+        winner = targetTeamKey;
+      }
+    }
+
+    const nextState: Partial<GameState> = {
+      phase: nextPhase,
+      winnerTeam: winner,
+      [targetTeamKey]: {
+        ...targetTeam,
+        cells: updatedCells,
+        completedLines: newCompletedLines,
+      },
+    };
+
+    sendWs('UPDATE_STATE', nextState);
+  }, [currentUser, gameState, sendWs]);
+
+  // 먹물 투척
   const useInkAttack = useCallback(() => {
-    if (!currentUser) return;
-    if (!currentUser.isLeader) {
+    if (!currentUser?.isLeader) {
       alert('⚠️ 먹물 투척은 각 팀의 팀장만 사용할 수 있습니다!');
       return;
     }
 
     const attackerKey = currentUser.teamId;
     const targetKey: TeamId = attackerKey === 'teamA' ? 'teamB' : 'teamA';
+    const attackerTeam = gameState[attackerKey];
+    const targetTeam = gameState[targetKey];
 
-    setGameState((prev) => {
-      if (!prev.isStarted || prev.winnerTeam) return prev;
+    if (attackerTeam.skills.inkAttack <= 0) {
+      alert('먹물 투척을 모두 사용했습니다! (최대 2회)');
+      return;
+    }
 
-      const attackerTeam = prev[attackerKey];
-      const targetTeam = prev[targetKey];
+    const availableIndices = targetTeam.cells
+      .map((cell, idx) => (!isCellInked(cell) ? idx : -1))
+      .filter((idx) => idx !== -1);
 
-      if (attackerTeam.skills.inkAttack <= 0) {
-        alert('먹물 투척을 모두 사용했습니다! (최대 2회)');
-        return prev;
+    if (availableIndices.length === 0) {
+      alert('상대팀에 먹물을 뿌릴 수 있는 칸이 없습니다.');
+      return;
+    }
+
+    const targetIndices = shuffleArray(availableIndices).slice(0, 2);
+    const inkedUntil = Date.now() + INK_DURATION_MS;
+
+    const updatedTargetCells = targetTeam.cells.map((cell, idx) => {
+      if (targetIndices.includes(idx)) {
+        return { ...cell, inkedUntil };
       }
-
-      const availableIndices = targetTeam.cells
-        .map((cell, idx) => (!isCellInked(cell) ? idx : -1))
-        .filter((idx) => idx !== -1);
-
-      if (availableIndices.length === 0) {
-        alert('상대팀에 먹물을 뿌릴 수 있는 칸이 없습니다.');
-        return prev;
-      }
-
-      const shuffledIndices = shuffleArray(availableIndices);
-      const targetIndices = shuffledIndices.slice(0, 2);
-      const inkedUntil = Date.now() + INK_DURATION_MS;
-
-      const updatedTargetCells = targetTeam.cells.map((cell, idx) => {
-        if (targetIndices.includes(idx)) {
-          return { ...cell, inkedUntil };
-        }
-        return cell;
-      });
-
-      alert(`🦑 [먹물 투척 성공!] 상대 ${targetTeam.name}의 칸 2개를 3분 동안 먹물로 가렸습니다!`);
-
-      return {
-        ...prev,
-        [attackerKey]: {
-          ...attackerTeam,
-          skills: {
-            ...attackerTeam.skills,
-            inkAttack: attackerTeam.skills.inkAttack - 1,
-          },
-        },
-        [targetKey]: {
-          ...targetTeam,
-          cells: updatedTargetCells,
-        },
-      };
+      return cell;
     });
-  }, [currentUser]);
 
-  // 스킬 2: 판 흔들기 (오직 팀장 jackie, carol만 가능)
+    sendWs('UPDATE_STATE', {
+      [attackerKey]: {
+        ...attackerTeam,
+        skills: { ...attackerTeam.skills, inkAttack: attackerTeam.skills.inkAttack - 1 },
+      },
+      [targetKey]: {
+        ...targetTeam,
+        cells: updatedTargetCells,
+      },
+    });
+
+    alert(`🦑 [먹물 투척!] 상대 ${targetTeam.name}의 칸 2개를 3분간 가렸습니다!`);
+  }, [currentUser, gameState, sendWs]);
+
+  // 판 흔들기
   const useShuffleOpponentBoard = useCallback(() => {
-    if (!currentUser) return;
-    if (!currentUser.isLeader) {
+    if (!currentUser?.isLeader) {
       alert('⚠️ 판 흔들기는 각 팀의 팀장만 사용할 수 있습니다!');
       return;
     }
 
     const attackerKey = currentUser.teamId;
     const targetKey: TeamId = attackerKey === 'teamA' ? 'teamB' : 'teamA';
+    const attackerTeam = gameState[attackerKey];
+    const targetTeam = gameState[targetKey];
 
-    setGameState((prev) => {
-      if (!prev.isStarted || prev.winnerTeam) return prev;
+    if (attackerTeam.skills.shuffleBoard <= 0) {
+      alert('판 흔들기를 이미 사용했습니다!');
+      return;
+    }
 
-      const attackerTeam = prev[attackerKey];
-      const targetTeam = prev[targetKey];
+    const shuffled = shuffleArray(targetTeam.cells).map((cell, index) => ({
+      ...cell,
+      positionIndex: index,
+    }));
 
-      if (attackerTeam.skills.shuffleBoard <= 0) {
-        alert('판 흔들기를 이미 사용했습니다! (최대 1회)');
-        return prev;
-      }
+    setBoardShakeTeam(targetKey);
+    setTimeout(() => setBoardShakeTeam(null), 800);
 
-      const shuffled = shuffleArray(targetTeam.cells).map((cell, index) => ({
-        ...cell,
-        positionIndex: index,
-      }));
-
-      const newCompletedLines = calculateCompletedLines(shuffled);
-
-      setBoardShakeTeam(targetKey);
-      setTimeout(() => setBoardShakeTeam(null), 800);
-
-      alert(`🌪️ [판 흔들기 발동!] 상대 ${targetTeam.name}의 빙고판 전체를 무작위로 흔들어 섞었습니다!`);
-
-      return {
-        ...prev,
-        [attackerKey]: {
-          ...attackerTeam,
-          skills: {
-            ...attackerTeam.skills,
-            shuffleBoard: attackerTeam.skills.shuffleBoard - 1,
-          },
-        },
-        [targetKey]: {
-          ...targetTeam,
-          cells: shuffled,
-          completedLines: newCompletedLines,
-        },
-      };
+    sendWs('UPDATE_STATE', {
+      [attackerKey]: {
+        ...attackerTeam,
+        skills: { ...attackerTeam.skills, shuffleBoard: attackerTeam.skills.shuffleBoard - 1 },
+      },
+      [targetKey]: {
+        ...targetTeam,
+        cells: shuffled,
+        completedLines: calculateCompletedLines(shuffled),
+      },
     });
-  }, [currentUser]);
+
+    alert(`🌪️ [판 흔들기!] 상대 ${targetTeam.name}의 빙고판 전체를 뒤흔들었습니다!`);
+  }, [currentUser, gameState, sendWs]);
+
+  // 채팅 전송
+  const sendChatMessage = useCallback((text: string) => {
+    if (!currentUser || !text.trim()) return;
+    const msg = {
+      id: `${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      senderId: currentUser.id,
+      senderName: currentUser.name,
+      teamId: currentUser.teamId,
+      teamName: currentUser.teamName,
+      isLeader: currentUser.isLeader,
+      text: text.trim(),
+      timestamp: Date.now(),
+    };
+    sendWs('SEND_CHAT', msg);
+  }, [currentUser, sendWs]);
 
   const userTeamId = currentUser?.teamId ?? 'teamA';
   const currentTeam = gameState[userTeamId];
@@ -369,7 +411,9 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     startGame,
     resetGame,
     completeMission,
+    voteMission,
     useInkAttack,
     useShuffleOpponentBoard,
+    sendChatMessage,
   };
 }
