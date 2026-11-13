@@ -60,7 +60,7 @@ export interface ChatMessage {
 export interface GameState {
   phase: GamePhase;
   isStarted: boolean;
-  startTime?: number; // ms
+  startTime?: number | null; // ms
   durationSeconds: number; // 7200초 (2시간)
   winnerTeam?: TeamId | null;
   candidateTeam?: TeamId | null; // 3줄 달성하여 심사받는 팀

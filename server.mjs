@@ -1,9 +1,13 @@
-import { WebSocketServer, WebSocket } from 'ws';
-import http from 'http';
+import express from 'express';
+import cors from 'cors';
 
+const app = express();
 const PORT = 3001;
 
-// 16개 미션 기본 데이터
+app.use(cors());
+app.use(express.json({ limit: '15mb' }));
+
+// 16개 미션
 const INITIAL_MISSIONS = [
   { id: 1, title: '8글자인 간판 찍기', description: '띄어쓰기 제외 또는 포함 8글자 간판을 찾아 찰칵!', emoji: '🪧' },
   { id: 2, title: '동물 모양 물건 찍기', description: '동물 모양이 들어간 소품이나 물건 찾아 찰칵!', emoji: '🧸' },
@@ -23,7 +27,13 @@ const INITIAL_MISSIONS = [
   { id: 16, title: '공룡 찾아서 찍기', description: '인형, 그림, 장난감, 표지판 속 공룡 찰칵!', emoji: '🦖' },
 ];
 
-function shuffleArray(array) {
+const BINGO_LINES = [
+  [0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15],
+  [0, 4, 8, 12], [1, 5, 9, 13], [2, 6, 10, 14], [3, 7, 11, 15],
+  [0, 5, 10, 15], [3, 6, 9, 12],
+];
+
+function shuffle(array) {
   const arr = [...array];
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -33,14 +43,22 @@ function shuffleArray(array) {
 }
 
 function createCells() {
-  return shuffleArray(INITIAL_MISSIONS).map((m, idx) => ({
+  return shuffle(INITIAL_MISSIONS).map((m, idx) => ({
     positionIndex: idx,
     mission: m,
     isCompleted: false,
+    reviewStatus: 'PENDING',
     approvedUsers: [],
     rejectedUsers: [],
-    reviewStatus: 'PENDING',
   }));
+}
+
+function calculateLines(cells) {
+  let count = 0;
+  for (const line of BINGO_LINES) {
+    if (line.every((i) => cells[i]?.isCompleted)) count++;
+  }
+  return count;
 }
 
 function getInitialState() {
@@ -48,6 +66,7 @@ function getInitialState() {
     phase: 'WAITING',
     isStarted: false,
     durationSeconds: 7200,
+    startTime: null,
     winnerTeam: null,
     candidateTeam: null,
     teamA: {
@@ -78,61 +97,175 @@ function getInitialState() {
 
 let gameState = getInitialState();
 
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ status: 'ok', playersOnline: wss.clients.size }));
+// 1. 상태 조회
+app.get('/api/state', (req, res) => {
+  res.json({ success: true, state: gameState });
 });
 
-const wss = new WebSocketServer({ server });
-
-function broadcast(type, payload) {
-  const msg = JSON.stringify({ type, payload });
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(msg);
-    }
-  });
-}
-
-wss.on('connection', (ws) => {
-  // 새 접속자에게 현재 게임 상태 전송
-  ws.send(JSON.stringify({ type: 'SYNC_STATE', payload: gameState }));
-
-  ws.on('message', (data) => {
-    try {
-      const { type, payload } = JSON.parse(data.toString());
-
-      if (type === 'START_GAME') {
-        gameState.phase = 'PLAYING';
-        gameState.isStarted = true;
-        gameState.startTime = Date.now();
-        gameState.winnerTeam = null;
-        gameState.candidateTeam = null;
-        gameState.teamA.cells = createCells();
-        gameState.teamB.cells = createCells();
-        gameState.teamA.completedLines = 0;
-        gameState.teamB.completedLines = 0;
-        gameState.teamA.skills = { inkAttack: 2, shuffleBoard: 1 };
-        gameState.teamB.skills = { inkAttack: 2, shuffleBoard: 1 };
-        gameState.messages = []; // 게임 시작 시 채팅 초기화
-        broadcast('SYNC_STATE', gameState);
-        broadcast('COUNTDOWN_START', {});
-      } else if (type === 'UPDATE_STATE') {
-        gameState = { ...gameState, ...payload };
-        broadcast('SYNC_STATE', gameState);
-      } else if (type === 'SEND_CHAT') {
-        gameState.messages.push(payload);
-        broadcast('NEW_CHAT', payload);
-      } else if (type === 'RESET_GAME') {
-        gameState = getInitialState();
-        broadcast('SYNC_STATE', gameState);
-      }
-    } catch (e) {
-      console.error('Error handling message:', e);
-    }
-  });
+// 2. 게임 시작
+app.post('/api/start', (req, res) => {
+  gameState.phase = 'PLAYING';
+  gameState.isStarted = true;
+  gameState.startTime = Date.now();
+  gameState.winnerTeam = null;
+  gameState.candidateTeam = null;
+  gameState.teamA.cells = createCells();
+  gameState.teamB.cells = createCells();
+  gameState.teamA.completedLines = 0;
+  gameState.teamB.completedLines = 0;
+  gameState.teamA.skills = { inkAttack: 2, shuffleBoard: 1 };
+  gameState.teamB.skills = { inkAttack: 2, shuffleBoard: 1 };
+  gameState.messages = [];
+  res.json({ success: true, state: gameState });
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Realtime Photo Bingo Server running on port ${PORT}`);
+// 3. 사진 등록
+app.post('/api/cell', (req, res) => {
+  const { teamId, positionIndex, photoUrl, userId } = req.body;
+  if (!gameState.isStarted || gameState.phase === 'FINISHED') {
+    return res.status(400).json({ success: false, message: '진행 중이 아닙니다.' });
+  }
+
+  const team = gameState[teamId];
+  if (!team) return res.status(400).json({ success: false });
+
+  team.cells = team.cells.map((cell, idx) => {
+    if (idx === positionIndex) {
+      return {
+        ...cell,
+        isCompleted: true,
+        photoUrl,
+        completedAt: Date.now(),
+        completedBy: userId,
+        reviewStatus: 'PENDING',
+        approvedUsers: [],
+        rejectedUsers: [],
+      };
+    }
+    return cell;
+  });
+
+  const lines = calculateLines(team.cells);
+  team.completedLines = lines;
+
+  // 3줄 달성 시 심사 단계 돌입
+  if (lines >= 3 && gameState.phase === 'PLAYING') {
+    gameState.phase = 'REVIEWING';
+    gameState.candidateTeam = teamId;
+  }
+
+  res.json({ success: true, state: gameState });
+});
+
+// 4. 스킬: 먹물 투척
+app.post('/api/skill/ink', (req, res) => {
+  const { attackerTeamId } = req.body;
+  const targetTeamId = attackerTeamId === 'teamA' ? 'teamB' : 'teamA';
+  const attacker = gameState[attackerTeamId];
+  const target = gameState[targetTeamId];
+
+  if (attacker.skills.inkAttack <= 0) {
+    return res.status(400).json({ success: false, message: '먹물 투척 소진' });
+  }
+
+  const uninked = target.cells
+    .map((c, idx) => (!c.inkedUntil || c.inkedUntil <= Date.now() ? idx : -1))
+    .filter((i) => i !== -1);
+
+  const chosen = shuffle(uninked).slice(0, 2);
+  const inkedUntil = Date.now() + 180 * 1000;
+
+  target.cells = target.cells.map((c, idx) => {
+    if (chosen.includes(idx)) {
+      return { ...c, inkedUntil };
+    }
+    return c;
+  });
+
+  attacker.skills.inkAttack -= 1;
+  res.json({ success: true, state: gameState });
+});
+
+// 5. 스킬: 판 흔들기
+app.post('/api/skill/shuffle', (req, res) => {
+  const { attackerTeamId } = req.body;
+  const targetTeamId = attackerTeamId === 'teamA' ? 'teamB' : 'teamA';
+  const attacker = gameState[attackerTeamId];
+  const target = gameState[targetTeamId];
+
+  if (attacker.skills.shuffleBoard <= 0) {
+    return res.status(400).json({ success: false, message: '판 흔들기 소진' });
+  }
+
+  target.cells = shuffle(target.cells).map((c, idx) => ({ ...c, positionIndex: idx }));
+  target.completedLines = calculateLines(target.cells);
+  attacker.skills.shuffleBoard -= 1;
+
+  res.json({ success: true, state: gameState });
+});
+
+// 6. 채팅 전송
+app.post('/api/chat', (req, res) => {
+  const msg = req.body;
+  if (!msg || !msg.text) return res.status(400).json({ success: false });
+  gameState.messages.push(msg);
+  res.json({ success: true, state: gameState });
+});
+
+// 7. 심사 투표
+app.post('/api/vote', (req, res) => {
+  const { positionIndex, isApprove, voterId } = req.body;
+  const candidateTeamId = gameState.candidateTeam;
+  if (!candidateTeamId) return res.status(400).json({ success: false });
+
+  const team = gameState[candidateTeamId];
+  const cell = team.cells[positionIndex];
+  if (!cell || !cell.isCompleted) return res.status(400).json({ success: false });
+
+  let approved = (cell.approvedUsers || []).filter((id) => id !== voterId);
+  let rejected = (cell.rejectedUsers || []).filter((id) => id !== voterId);
+
+  if (isApprove) approved.push(voterId);
+  else rejected.push(voterId);
+
+  let reviewStatus = 'PENDING';
+  let isCompleted = cell.isCompleted;
+
+  if (rejected.length >= 3) {
+    reviewStatus = 'REJECTED';
+    isCompleted = false; // 과반 노인정 시 탈락!
+  } else if (approved.length >= 3) {
+    reviewStatus = 'APPROVED';
+  }
+
+  cell.approvedUsers = approved;
+  cell.rejectedUsers = rejected;
+  cell.reviewStatus = reviewStatus;
+  cell.isCompleted = isCompleted;
+
+  const lines = calculateLines(team.cells);
+  team.completedLines = lines;
+
+  if (lines < 3 && rejected.length >= 3) {
+    gameState.phase = 'PLAYING'; // 3줄 깨짐 -> 게임 복귀
+  } else {
+    const completedCells = team.cells.filter((c) => c.isCompleted);
+    const allApproved = completedCells.every((c) => (c.approvedUsers?.length ?? 0) >= 3);
+    if (allApproved && lines >= 3) {
+      gameState.phase = 'FINISHED';
+      gameState.winnerTeam = candidateTeamId;
+    }
+  }
+
+  res.json({ success: true, state: gameState });
+});
+
+// 8. 리셋
+app.post('/api/reset', (req, res) => {
+  gameState = getInitialState();
+  res.json({ success: true, state: gameState });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 REST Photo Bingo API Server running on port ${PORT}`);
 });

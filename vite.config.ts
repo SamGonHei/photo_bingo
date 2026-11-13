@@ -13,11 +13,10 @@ export default defineConfig({
     host: true,
     port: 3000,
     proxy: {
-      // 모바일에서 3000번 포트 하나로 웹소켓까지 통과
-      '/ws': {
-        target: 'ws://localhost:3001',
-        ws: true,
-        rewriteWsOrigin: true,
+      // 3000번 포트로 들어오는 /api 요청을 Express 백엔드(3001)로 자동 전달
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
       },
     },
   },
