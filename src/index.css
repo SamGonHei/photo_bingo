@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    background-color: #FFFDF7;
+  }
+
+  .font-jua {
+    font-family: 'Jua', 'Noto Sans KR', sans-serif;
+  }
+}
+
+@keyframes stampBounce {
+  0% { transform: scale(3) rotate(-20deg); opacity: 0; }
+  60% { transform: scale(0.9) rotate(5deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+@keyframes shakeBoard {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  20% { transform: translateX(-8px) rotate(-2deg); }
+  40% { transform: translateX(8px) rotate(2deg); }
+  60% { transform: translateX(-6px) rotate(-1deg); }
+  80% { transform: translateX(6px) rotate(1deg); }
+}
+
+@keyframes inkSplash {
+  0% { transform: scale(0) rotate(0deg); opacity: 0; }
+  50% { transform: scale(1.2) rotate(15deg); opacity: 0.9; }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+.animate-stamp {
+  animation: stampBounce 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.animate-shake {
+  animation: shakeBoard 0.6s ease-in-out;
+}
+
+.animate-ink {
+  animation: inkSplash 0.4s ease-out forwards;
+}
