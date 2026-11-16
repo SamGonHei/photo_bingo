@@ -87,7 +87,7 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
           </div>
         </>
       ) : (
-        /* 3. 미완료 상태: 번호 + 이모지 + 또렷하고 예쁜 미션 텍스트 */
+        /* 3. 미완료 상태: 번호 + 이모지 + 두 줄 기준 상단 정렬로 위치 완벽 통일 */
         <>
           <div className="w-full flex items-center justify-start text-[8.5px] text-slate-400 font-black px-0.5 leading-none font-mono">
             #{index + 1}
@@ -97,8 +97,8 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
             {cell.mission.emoji}
           </div>
 
-          <div className="w-full text-center px-0.5">
-            <div className="text-xs sm:text-[13px] font-black text-slate-800 leading-snug line-clamp-2 font-jua tracking-tight drop-shadow-2xs">
+          <div className="w-full h-8 sm:h-9 flex items-start justify-center px-0.5 overflow-hidden">
+            <div className="text-xs sm:text-[13px] font-black text-slate-800 leading-[1.2] line-clamp-2 font-jua tracking-tight drop-shadow-2xs text-center">
               {cell.mission.title}
             </div>
           </div>

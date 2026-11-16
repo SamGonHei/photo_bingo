@@ -234,6 +234,19 @@ function MainApp() {
           </div>
         )}
 
+        {/* 상대 2줄 달성 시 빙고 임박 긴급 경고 배너 */}
+        {opponentTeam.completedLines >= 2 && gameState.phase === 'PLAYING' && (
+          <div className="w-full bg-linear-to-r from-red-600 via-rose-600 to-red-500 text-white px-3 py-1 flex items-center justify-between shadow-md animate-pulse shrink-0 font-jua select-none border-b border-red-700">
+            <div className="flex items-center gap-1.5 text-xs font-black">
+              <span className="text-sm animate-bounce">💢</span>
+              <span>[긴급] 상대 {opponentTeam.name} 2줄 달성! 빙고 임박!!!</span>
+            </div>
+            <span className="text-[9.5px] bg-white text-rose-600 px-2 py-0.2 rounded-full font-black shadow-xs">
+              스킬로 저지하세요! 🦑
+            </span>
+          </div>
+        )}
+
         {/* 메인 영역 */}
         <main className="flex-1 min-h-0 flex flex-col px-2 py-0.5 overflow-hidden justify-between">
           {/* 스킬 바 */}
