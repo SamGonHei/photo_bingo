@@ -6,10 +6,11 @@ import { Lock, Check } from 'lucide-react';
 interface Props {
   cell: BingoCell;
   index: number;
+  fontScale?: number; // 0: 기본(100%), 1: 크게(115%), 2: 최대(130%)
   onCellClick: (cell: BingoCell, index: number) => void;
 }
 
-export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
+export const BingoCard: React.FC<Props> = ({ cell, index, fontScale = 0, onCellClick }) => {
   const [inkTimer, setInkTimer] = useState<number>(() => getInkRemainingSeconds(cell));
 
   useEffect(() => {
@@ -35,10 +36,25 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
     return `${m}:${String(s).padStart(2, '0')}`;
   };
 
+  // fontScale에 따른 글자 크기 및 이모지 비율 조정 (스크롤 방지)
+  const titleClass =
+    fontScale === 2
+      ? 'text-[14px] sm:text-[15.5px] leading-[1.12]'
+      : fontScale === 1
+      ? 'text-[13px] sm:text-[14px] leading-[1.15]'
+      : 'text-xs sm:text-[13px] leading-[1.2]';
+
+  const emojiClass =
+    fontScale === 2
+      ? 'text-base sm:text-lg'
+      : fontScale === 1
+      ? 'text-lg sm:text-xl'
+      : 'text-xl sm:text-2xl';
+
   return (
     <div
       onClick={() => onCellClick(cell, index)}
-      className={`relative w-full h-full rounded-2xl p-1.5 flex flex-col items-center justify-between overflow-hidden cursor-pointer select-none transition-all duration-150 active:scale-95 border-2 shadow-2xs ${
+      className={`relative w-full h-full rounded-2xl p-1 sm:p-1.5 flex flex-col items-center justify-between overflow-hidden cursor-pointer select-none transition-all duration-150 active:scale-95 border-2 shadow-2xs ${
         isInked
           ? 'bg-slate-900 border-purple-800 text-white shadow-xs'
           : cell.isCompleted
@@ -76,11 +92,11 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
           </div>
 
           <div className="relative z-10 w-full mt-auto px-0.5">
-            <div className="text-[10px] font-black text-white text-center truncate drop-shadow-md font-jua leading-tight">
+            <div className={`font-black text-white text-center truncate drop-shadow-md font-jua ${titleClass}`}>
               {cell.mission.title}
             </div>
             {cell.completedBy && (
-              <div className="text-[7.5px] text-amber-300 text-center uppercase tracking-wider font-extrabold mt-0.5 leading-none">
+              <div className="text-[7.5px] text-amber-300 text-center uppercase tracking-wider font-extrabold mt-0.5 leading-none drop-shadow-sm">
                 by {cell.completedBy}
               </div>
             )}
@@ -89,16 +105,16 @@ export const BingoCard: React.FC<Props> = ({ cell, index, onCellClick }) => {
       ) : (
         /* 3. 미완료 상태: 번호 + 이모지 + 두 줄 기준 상단 정렬로 위치 완벽 통일 */
         <>
-          <div className="w-full flex items-center justify-start text-[8.5px] text-slate-400 font-black px-0.5 leading-none font-mono">
+          <div className="w-full flex items-center justify-start text-[8px] sm:text-[8.5px] text-slate-400 font-black px-0.5 leading-none font-mono">
             #{index + 1}
           </div>
 
-          <div className="text-xl sm:text-2xl my-auto transform transition-transform group-hover:scale-110 leading-none">
+          <div className={`${emojiClass} my-auto transform transition-transform group-hover:scale-110 leading-none`}>
             {cell.mission.emoji}
           </div>
 
           <div className="w-full h-8 sm:h-9 flex items-start justify-center px-0.5 overflow-hidden">
-            <div className="text-xs sm:text-[13px] font-black text-slate-800 leading-[1.2] line-clamp-2 font-jua tracking-tight drop-shadow-2xs text-center">
+            <div className={`font-black text-slate-800 line-clamp-2 font-jua tracking-tight drop-shadow-2xs text-center ${titleClass}`}>
               {cell.mission.title}
             </div>
           </div>

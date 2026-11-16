@@ -8,6 +8,7 @@ interface Props {
   currentUser: UserProfile;
   reviewStartTime?: number | null;
   onVote: (positionIndex: number, isApprove: boolean) => void;
+  onVoteAll?: (isApprove: boolean) => void;
   onClose: () => void;
 }
 
@@ -19,6 +20,7 @@ export const ReviewModal: React.FC<Props> = ({
   currentUser,
   reviewStartTime,
   onVote,
+  onVoteAll,
   onClose,
 }) => {
   const [remSeconds, setRemSeconds] = useState(REVIEW_DURATION_SEC);
@@ -219,9 +221,34 @@ export const ReviewModal: React.FC<Props> = ({
           })}
         </div>
 
+        {/* 상대팀 유저를 위한 '전체 인정' 버튼 섹션 */}
+        {isOpponent && onVoteAll && (
+          <div className="p-2.5 bg-gradient-to-r from-emerald-50 via-teal-50 to-emerald-50 border-t border-emerald-200 flex items-center justify-between gap-2 shrink-0">
+            <div className="flex flex-col text-left">
+              <span className="text-[11px] font-black text-emerald-950 font-jua">
+                모든 사진이 확실한가요?
+              </span>
+              <span className="text-[9px] text-emerald-700 font-semibold">
+                클릭 한 번으로 전체 사진을 인정합니다
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                if (confirm('모든 사진을 한 번에 [인정]하시겠습니까? 👏')) {
+                  onVoteAll(true);
+                }
+              }}
+              className="py-2.5 px-4 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 active:scale-95 text-white rounded-xl text-xs font-black shadow-md shadow-emerald-600/30 flex items-center gap-1.5 font-jua transition-all shrink-0"
+            >
+              <ThumbsUp className="w-3.5 h-3.5" />
+              <span>✨ 전체 사진 일괄 인정</span>
+            </button>
+          </div>
+        )}
+
         {/* 하단 안내 배너 */}
-        <div className="p-2.5 bg-white border-t border-orange-100 text-center shrink-0">
-          <div className="flex items-center justify-center gap-1 text-[10.5px] font-bold text-slate-500">
+        <div className="p-2 bg-white border-t border-orange-100 text-center shrink-0">
+          <div className="flex items-center justify-center gap-1 text-[10px] font-bold text-slate-500">
             <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
             <span>상대팀 5명 중 3명 이상(과반수) 인정 시 빙고가 확정되며 최종 승리합니다! 🏆</span>
           </div>

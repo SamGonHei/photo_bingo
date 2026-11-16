@@ -449,6 +449,85 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     broadcastState(nextState);
   }, [currentUser, gameState, broadcastState]);
 
+  // 심사 대상 사진 전체 일괄 인정
+  const voteAllMissions = useCallback((isApprove: boolean = true) => {
+    if (!currentUser || !gameState.candidateTeam) return;
+
+    const targetTeamKey = gameState.candidateTeam;
+    if (currentUser.teamId === targetTeamKey) {
+      alert('⚠️ 본인 팀의 사진에는 투표할 수 없습니다. 상대팀이 심사합니다!');
+      return;
+    }
+
+    const targetTeam = gameState[targetTeamKey];
+    if (!targetTeam) return;
+
+    const voterId = currentUser.id;
+
+    const updatedCells = targetTeam.cells.map((cell) => {
+      // 심사 대상인 셀(완료되었거나 REJECTED 상태인 셀)에 대해 일괄 투표 반영
+      if (!cell.isCompleted && cell.reviewStatus !== 'REJECTED') {
+        return cell;
+      }
+
+      let approved = (cell.approvedUsers || []).filter((id) => id !== voterId);
+      let rejected = (cell.rejectedUsers || []).filter((id) => id !== voterId);
+
+      if (isApprove) approved.push(voterId);
+      else rejected.push(voterId);
+
+      let reviewStatus = cell.reviewStatus;
+      let isCompleted = cell.isCompleted;
+
+      if (rejected.length >= 3) {
+        reviewStatus = 'REJECTED';
+        isCompleted = false;
+      } else if (approved.length >= 3) {
+        reviewStatus = 'APPROVED';
+        isCompleted = true;
+      }
+
+      return {
+        ...cell,
+        approvedUsers: approved,
+        rejectedUsers: rejected,
+        reviewStatus,
+        isCompleted,
+      };
+    });
+
+    const lines = calculateCompletedLines(updatedCells);
+    const approvedLines = calculateApprovedLines(updatedCells);
+    let nextPhase = gameState.phase;
+    let winner = gameState.winnerTeam;
+
+    if (lines < 3 && isApprove === false) {
+      nextPhase = 'PLAYING';
+      alert('❌ [노인정 과반수!] 빙고가 취소되었습니다.');
+    } else {
+      const completedCells = updatedCells.filter((c) => c.isCompleted);
+      const allApproved = completedCells.length > 0 && completedCells.every((c) => (c.approvedUsers?.length ?? 0) >= 3);
+
+      if (approvedLines >= 3 || (allApproved && lines >= 3)) {
+        nextPhase = 'FINISHED';
+        winner = targetTeamKey;
+      }
+    }
+
+    const nextState: GameState = {
+      ...gameState,
+      phase: nextPhase,
+      winnerTeam: winner,
+      [targetTeamKey]: {
+        ...targetTeam,
+        cells: updatedCells,
+        completedLines: lines,
+      },
+    };
+
+    broadcastState(nextState);
+  }, [currentUser, gameState, broadcastState]);
+
   // 먹물 투척
   const useInkAttack = useCallback(() => {
     if (!currentUser?.isLeader) {
@@ -587,6 +666,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     resetGame,
     completeMission,
     voteMission,
+    voteAllMissions,
     useInkAttack,
     useShuffleOpponentBoard,
     sendChatMessage,

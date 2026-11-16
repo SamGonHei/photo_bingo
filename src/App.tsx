@@ -119,11 +119,35 @@ function MainApp() {
     resetGame,
     completeMission,
     voteMission,
+    voteAllMissions,
     useInkAttack,
     useShuffleOpponentBoard,
     sendChatMessage,
     isFirebaseConfigured,
   } = usePhotoBingo(currentUser);
+
+  // 글자 크기 조절 상태 (0: 기본, 1: 크게, 2: 최대)
+  const [fontScale, setFontScale] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('photo_bingo_font_scale');
+      if (saved) return Number(saved);
+    } catch {
+      // ignore
+    }
+    return 0;
+  });
+
+  const handleFontScaleChange = (delta: number) => {
+    setFontScale((prev) => {
+      const next = Math.max(0, Math.min(2, prev + delta));
+      try {
+        localStorage.setItem('photo_bingo_font_scale', String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   // 심사 단계 종료 시 dismiss 리셋
   useEffect(() => {
@@ -333,6 +357,7 @@ function MainApp() {
                   key={`${cell.mission.id}-${index}`}
                   cell={cell}
                   index={index}
+                  fontScale={fontScale}
                   onCellClick={handleCellClick}
                 />
               ))}
@@ -343,11 +368,34 @@ function MainApp() {
           <div className="flex items-center justify-between gap-1.5 pt-0.5 pb-1 shrink-0">
             <button
               onClick={() => setShowRuleModal(true)}
-              className="flex-1 py-1.5 px-2 bg-white border border-orange-200 hover:bg-orange-50 text-slate-700 rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 shadow-2xs font-jua"
+              className="py-1.5 px-2 bg-white border border-orange-200 hover:bg-orange-50 text-slate-700 rounded-xl text-[10px] font-bold flex items-center justify-center gap-1 shadow-2xs font-jua shrink-0"
             >
               <HelpCircle className="w-3 h-3 text-orange-500" />
               <span>포토빙고 룰</span>
             </button>
+
+            {/* 글자 크기 조절 (+ / -) */}
+            <div className="flex items-center bg-white border border-orange-200 rounded-xl px-1.5 py-1 shadow-2xs font-jua gap-0.5 shrink-0">
+              <button
+                onClick={() => handleFontScaleChange(-1)}
+                disabled={fontScale === 0}
+                className="w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-orange-600 hover:bg-orange-50 disabled:opacity-25 disabled:pointer-events-none text-xs font-black transition-colors"
+                title="글자 크기 축소"
+              >
+                -
+              </button>
+              <span className="text-[10px] font-black text-slate-700 px-1 select-none whitespace-nowrap">
+                {fontScale === 0 ? '글자 보통' : fontScale === 1 ? '글자 크게' : '글자 최대'}
+              </span>
+              <button
+                onClick={() => handleFontScaleChange(1)}
+                disabled={fontScale === 2}
+                className="w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-orange-600 hover:bg-orange-50 disabled:opacity-25 disabled:pointer-events-none text-xs font-black transition-colors"
+                title="글자 크기 확대"
+              >
+                +
+              </button>
+            </div>
 
             {/* 실시간 채팅 버튼 & 안 읽은 카운트 */}
             <button
@@ -397,6 +445,7 @@ function MainApp() {
         currentUser={currentUser}
         reviewStartTime={gameState.reviewStartTime}
         onVote={voteMission}
+        onVoteAll={voteAllMissions}
         onClose={() => setIsReviewDismissed(true)}
       />
 
