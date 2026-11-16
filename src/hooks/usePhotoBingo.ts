@@ -2,17 +2,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import type { GameState, TeamId, UserProfile, ChatMessage } from '../types';
 import { INITIAL_MISSIONS } from '../data/missions';
 import { createShuffledCells, calculateCompletedLines, shuffleArray, isCellInked } from '../utils/bingo';
+import { db, ref, onValue, set, isFirebaseConfigured } from '../utils/firebase';
 import confetti from 'canvas-confetti';
 
 const STORAGE_KEY = 'photo_bingo_cloud_relay_v2';
+const DB_STATE_PATH = 'photo_bingo/state';
 const INK_DURATION_MS = 180 * 1000;
 const REVIEW_TIMEOUT_MS = 10 * 60 * 1000; // 10분
-
-// 전세계 어디서나 (GitHub Pages, 모바일 사파리/크롬 등) 100% 작동하는 초고속 실시간 Pub/Sub 릴레이
-const NTFY_TOPIC = 'photo_bingo_switching_day_2026_room';
-const NTFY_PUB_URL = `https://ntfy.sh/${NTFY_TOPIC}`;
-const NTFY_WS_URL = `wss://ntfy.sh/${NTFY_TOPIC}/ws`;
-const NTFY_POLL_URL = `https://ntfy.sh/${NTFY_TOPIC}/json?poll=1`;
 
 export function getInitialGameState(): GameState {
   return {
@@ -93,11 +89,13 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
   const [isShufflingEffect, setIsShufflingEffect] = useState(false);
   const [boardShakeTeam, setBoardShakeTeam] = useState<TeamId | null>(null);
 
-  const socketRef = useRef<WebSocket | null>(null);
   const gameStateRef = useRef(gameState);
   gameStateRef.current = gameState;
 
-  // 상태 로컬 저장 및 state 반영
+  // 게임 시작 연출 1회만 실행되도록 보장하는 ref
+  const hasPlayedStartAnimRef = useRef(false);
+
+  // 로컬 및 저장소 상태 갱신
   const updateLocalState = useCallback((newState: GameState) => {
     const valid = sanitizeGameState(newState);
     setGameState(valid);
@@ -108,168 +106,73 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     }
   }, []);
 
-  // 릴레이 HTTP POST 발송 함수
-  const sendRelay = useCallback(async (type: string, payload: unknown) => {
-    try {
-      const body = JSON.stringify({
-        type,
-        payload,
-        senderId: currentUser?.id,
-        timestamp: Date.now(),
-      });
+  // Firebase 실시간 상태 브로드캐스트
+  const broadcastState = useCallback((newState: GameState) => {
+    updateLocalState(newState);
 
-      await fetch(NTFY_PUB_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body,
-      });
-    } catch (e) {
-      console.warn('Relay send failed, retrying in background', e);
-    }
-  }, [currentUser]);
-
-  // 수신된 릴레이 페이로드 처리 핸들러
-  const handleIncomingPayload = useCallback((data: any) => {
-    if (!data || !data.type) return;
-
-    // 1. 상태 동기화
-    if (data.type === 'SYNC_FULL_STATE' || data.type === 'STATE_UPDATED') {
-      if (data.payload) {
-        updateLocalState(sanitizeGameState(data.payload));
+    if (isFirebaseConfigured && db) {
+      try {
+        const stateRef = ref(db, DB_STATE_PATH);
+        set(stateRef, newState).catch((err) => {
+          console.error('Firebase state sync failed:', err);
+        });
+      } catch (err) {
+        console.error('Firebase set error:', err);
       }
-      return;
-    }
-
-    // 2. 게임 시작 브로드캐스트
-    if (data.type === 'GAME_STARTED' && data.payload) {
-      const valid = sanitizeGameState(data.payload);
-      setCountdownText('준비~');
-      setTimeout(() => {
-        setCountdownText('시작! 🚀');
-        setTimeout(() => {
-          setCountdownText(null);
-          setIsShufflingEffect(true);
-          setTimeout(() => setIsShufflingEffect(false), 500);
-        }, 400);
-      }, 500);
-      updateLocalState(valid);
-      return;
-    }
-
-    // 3. 실시간 채팅 메시지
-    if (data.type === 'NEW_CHAT' && data.payload) {
-      setGameState((prev) => {
-        const currentMessages = prev.messages || [];
-        if (currentMessages.some((m) => m.id === data.payload.id)) return prev;
-        const next = { ...prev, messages: [...currentMessages, data.payload] };
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-        } catch {
-          // ignore
-        }
-        return next;
-      });
-      return;
-    }
-
-    // 4. 게임 리셋
-    if (data.type === 'GAME_RESET') {
-      const fresh = getInitialGameState();
-      updateLocalState(fresh);
-      return;
     }
   }, [updateLocalState]);
 
-  // ntfy 실시간 WebSocket 연결
+  // Firebase Realtime Database 실시간 구독 (0.1초 동기화)
   useEffect(() => {
-    let ws: WebSocket | null = null;
-    let isCleanedUp = false;
+    if (!isFirebaseConfigured || !db) {
+      console.warn('⚠️ Firebase is not configured. Running in local fallback mode.');
+      return;
+    }
 
-    const connectWebSocket = () => {
-      if (isCleanedUp) return;
-      try {
-        ws = new WebSocket(NTFY_WS_URL);
-        socketRef.current = ws;
+    const stateRef = ref(db, DB_STATE_PATH);
+    const unsubscribe = onValue(
+      stateRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          const valid = sanitizeGameState(val);
 
-        ws.onopen = () => {
-          console.log('✅ Realtime cloud sync connected');
-        };
-
-        ws.onmessage = async (event) => {
-          try {
-            const raw = JSON.parse(event.data);
-            if (raw.event !== 'message') return;
-
-            // 본문이 파일로 첨부된 경우 (용량 4KB 초과 시 ntfy 자동 파일 처리)
-            if (raw.attachment?.url) {
-              const res = await fetch(raw.attachment.url);
-              const data = await res.json();
-              handleIncomingPayload(data);
-            } else if (raw.message) {
-              const data = JSON.parse(raw.message);
-              handleIncomingPayload(data);
+          // 게임 시작 연출 감지 (이전 상태가 WAITING이었고 새로 들어온 상태가 PLAYING일 때 딱 1회만 실행)
+          if (valid.phase === 'PLAYING') {
+            if (!hasPlayedStartAnimRef.current && gameStateRef.current.phase === 'WAITING') {
+              hasPlayedStartAnimRef.current = true;
+              setCountdownText('준비~');
+              setTimeout(() => {
+                setCountdownText('시작! 🚀');
+                setTimeout(() => {
+                  setCountdownText(null);
+                  setIsShufflingEffect(true);
+                  setTimeout(() => setIsShufflingEffect(false), 500);
+                }, 400);
+              }, 500);
             }
-          } catch {
-            // ignore parse errors
+          } else if (valid.phase === 'WAITING') {
+            hasPlayedStartAnimRef.current = false;
+            setCountdownText(null);
+            setIsShufflingEffect(false);
           }
-        };
 
-        ws.onclose = () => {
-          if (!isCleanedUp) setTimeout(connectWebSocket, 2000);
-        };
-        ws.onerror = () => {
-          ws?.close();
-        };
-      } catch {
-        if (!isCleanedUp) setTimeout(connectWebSocket, 2000);
-      }
-    };
-
-    connectWebSocket();
-
-    // 초기 진입 시 및 주기적 4초 최신 상태 폴링 (중간 입장자 & 모바일 절전모드 완벽 동기화)
-    const pollLatest = async () => {
-      try {
-        const res = await fetch(NTFY_POLL_URL);
-        if (!res.ok) return;
-        const text = await res.text();
-        const lines = text.trim().split('\n').filter(Boolean);
-        if (lines.length === 0) return;
-
-        // 가장 최신의 유효한 메시지들 역순 검색
-        for (let i = lines.length - 1; i >= 0; i--) {
-          try {
-            const obj = JSON.parse(lines[i]);
-            if (obj.event === 'message') {
-              if (obj.attachment?.url) {
-                const subRes = await fetch(obj.attachment.url);
-                const data = await subRes.json();
-                handleIncomingPayload(data);
-                break;
-              } else if (obj.message) {
-                const data = JSON.parse(obj.message);
-                handleIncomingPayload(data);
-                break;
-              }
-            }
-          } catch {
-            // continue
-          }
+          updateLocalState(valid);
+        } else {
+          // 데이터베이스에 상태가 없는 경우 초기 상태 업로드
+          const initial = getInitialGameState();
+          set(stateRef, initial).catch((err) => console.error('Initial state upload error:', err));
         }
-      } catch {
-        // ignore
+      },
+      (error) => {
+        console.error('Firebase Realtime DB read error:', error);
       }
-    };
-
-    pollLatest();
-    const pollInterval = setInterval(pollLatest, 4000);
+    );
 
     return () => {
-      isCleanedUp = true;
-      clearInterval(pollInterval);
-      if (ws) ws.close();
+      unsubscribe();
     };
-  }, [handleIncomingPayload]);
+  }, [updateLocalState]);
 
   // 2시간 게임 타이머
   useEffect(() => {
@@ -291,7 +194,6 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     const interval = setInterval(() => {
       const elapsedMs = Date.now() - gameState.reviewStartTime!;
       if (elapsedMs >= REVIEW_TIMEOUT_MS) {
-        // 10분 경과! 상대팀 미심사로 자동 승리 확정
         const winner = gameState.candidateTeam;
         if (winner) {
           const autoWinState: GameState = {
@@ -299,15 +201,14 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
             phase: 'FINISHED',
             winnerTeam: winner,
           };
-          updateLocalState(autoWinState);
-          sendRelay('STATE_UPDATED', autoWinState);
+          broadcastState(autoWinState);
           alert(`⏰ [10분 시간 초과!] 상대팀이 제한시간(10분) 내에 심사를 완료하지 않아, ${gameStateRef.current[winner].name}의 최종 승리로 확정되었습니다! 🏆`);
         }
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [gameState.phase, gameState.reviewStartTime, gameState.winnerTeam, gameState.candidateTeam, sendRelay, updateLocalState]);
+  }, [gameState.phase, gameState.reviewStartTime, gameState.winnerTeam, gameState.candidateTeam, broadcastState]);
 
   // 승리 축하 폭죽
   const hasTriggeredConfetti = useRef(false);
@@ -331,52 +232,46 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       return;
     }
 
-    setCountdownText('준비~');
-    setTimeout(() => {
-      setCountdownText('시작! 🚀');
-      setTimeout(() => {
-        setCountdownText(null);
-        setIsShufflingEffect(true);
+    // 이미 시작되었거나 진행 중인 경우 중복 클릭 방지
+    if (gameStateRef.current.phase !== 'WAITING') {
+      return;
+    }
 
-        const newTeamACells = createShuffledCells(INITIAL_MISSIONS);
-        const newTeamBCells = createShuffledCells(INITIAL_MISSIONS);
+    const newTeamACells = createShuffledCells(INITIAL_MISSIONS);
+    const newTeamBCells = createShuffledCells(INITIAL_MISSIONS);
 
-        const startedState: GameState = {
-          ...gameState,
-          phase: 'PLAYING',
-          isStarted: true,
-          startTime: Date.now(),
-          winnerTeam: null,
-          candidateTeam: null,
-          reviewStartTime: null,
-          teamA: {
-            ...gameState.teamA,
-            cells: newTeamACells,
-            completedLines: 0,
-            skills: { inkAttack: 2, shuffleBoard: 1 },
-          },
-          teamB: {
-            ...gameState.teamB,
-            cells: newTeamBCells,
-            completedLines: 0,
-            skills: { inkAttack: 2, shuffleBoard: 1 },
-          },
-          messages: [],
-        };
+    const startedState: GameState = {
+      ...gameStateRef.current,
+      phase: 'PLAYING',
+      isStarted: true,
+      startTime: Date.now(),
+      winnerTeam: null,
+      candidateTeam: null,
+      reviewStartTime: null,
+      teamA: {
+        ...gameStateRef.current.teamA,
+        cells: newTeamACells,
+        completedLines: 0,
+        skills: { inkAttack: 2, shuffleBoard: 1 },
+      },
+      teamB: {
+        ...gameStateRef.current.teamB,
+        cells: newTeamBCells,
+        completedLines: 0,
+        skills: { inkAttack: 2, shuffleBoard: 1 },
+      },
+      messages: [],
+    };
 
-        updateLocalState(startedState);
-        sendRelay('GAME_STARTED', startedState);
-        setTimeout(() => setIsShufflingEffect(false), 500);
-      }, 500);
-    }, 600);
-  }, [currentUser, gameState, sendRelay, updateLocalState]);
+    // 즉시 전체 참가자에게 상태 브로드캐스트 (모든 클라이언트가 동시에 연출 및 게임 시작)
+    broadcastState(startedState);
+  }, [currentUser, broadcastState]);
 
   // 게임 리셋
   const resetGame = useCallback(() => {
     const fresh = getInitialGameState();
-    updateLocalState(fresh);
-    sendRelay('GAME_RESET', {});
-  }, [sendRelay, updateLocalState]);
+    broadcastState(fresh);
+  }, [broadcastState]);
 
   // 사진 등록
   const completeMission = useCallback((positionIndex: number, photoUrl: string) => {
@@ -430,9 +325,8 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    updateLocalState(nextState);
-    sendRelay('STATE_UPDATED', nextState);
-  }, [currentUser, gameState, sendRelay, updateLocalState]);
+    broadcastState(nextState);
+  }, [currentUser, gameState, broadcastState]);
 
   // 심사 투표
   const voteMission = useCallback((positionIndex: number, isApprove: boolean) => {
@@ -508,9 +402,8 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    updateLocalState(nextState);
-    sendRelay('STATE_UPDATED', nextState);
-  }, [currentUser, gameState, sendRelay, updateLocalState]);
+    broadcastState(nextState);
+  }, [currentUser, gameState, broadcastState]);
 
   // 먹물 투척
   const useInkAttack = useCallback(() => {
@@ -561,10 +454,9 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    updateLocalState(nextState);
-    sendRelay('STATE_UPDATED', nextState);
+    broadcastState(nextState);
     alert(`🦑 [먹물 투척!] 상대 ${targetTeam.name}의 칸 2개를 3분간 가렸습니다!`);
-  }, [currentUser, gameState, sendRelay, updateLocalState]);
+  }, [currentUser, gameState, broadcastState]);
 
   // 판 흔들기
   const useShuffleOpponentBoard = useCallback(() => {
@@ -606,10 +498,9 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       },
     };
 
-    updateLocalState(nextState);
-    sendRelay('STATE_UPDATED', nextState);
+    broadcastState(nextState);
     alert(`🌪️ [판 흔들기!] 상대 ${targetTeam.name}의 빙고판 전체를 뒤흔들었습니다!`);
-  }, [currentUser, gameState, sendRelay, updateLocalState]);
+  }, [currentUser, gameState, broadcastState]);
 
   // 채팅 전송
   const sendChatMessage = useCallback((text: string) => {
@@ -625,18 +516,13 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       timestamp: Date.now(),
     };
 
-    setGameState((prev) => {
-      const next = { ...prev, messages: [...(prev.messages || []), newMsg] };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+    const nextState: GameState = {
+      ...gameStateRef.current,
+      messages: [...(gameStateRef.current.messages || []), newMsg],
+    };
 
-    sendRelay('NEW_CHAT', newMsg);
-  }, [currentUser, sendRelay]);
+    broadcastState(nextState);
+  }, [currentUser, broadcastState]);
 
   const userTeamId = currentUser?.teamId ?? 'teamA';
   const base = getInitialGameState();
@@ -658,5 +544,6 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     useInkAttack,
     useShuffleOpponentBoard,
     sendChatMessage,
+    isFirebaseConfigured,
   };
 }

@@ -121,6 +121,7 @@ function MainApp() {
     useInkAttack,
     useShuffleOpponentBoard,
     sendChatMessage,
+    isFirebaseConfigured,
   } = usePhotoBingo(currentUser);
 
   // 심사 단계 종료 시 dismiss 리셋
@@ -205,6 +206,16 @@ function MainApp() {
           isStarted={gameState.isStarted}
           onLogout={handleLogout}
         />
+
+        {/* Firebase 미설정 시 안내 배너 */}
+        {!isFirebaseConfigured && (
+          <div className="w-full bg-amber-50 border-b border-amber-200 px-3 py-1.5 flex items-center justify-between text-amber-900 text-[11px] font-semibold shrink-0">
+            <span className="flex items-center gap-1">
+              <span>⚠️</span>
+              <span>[로컬 모드] Vercel 환경변수에 Firebase 설정을 추가하면 참가자 실시간 연동이 활성화됩니다.</span>
+            </span>
+          </div>
+        )}
 
         {/* 심사 중 나가기 시 상단 플로팅 배너 */}
         {gameState.phase === 'REVIEWING' && isReviewDismissed && (
