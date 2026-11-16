@@ -68,4 +68,8 @@ export interface GameState {
   teamA: TeamState;
   teamB: TeamState;
   messages: ChatMessage[];
+  shakeAlert?: {
+    targetTeamId: TeamId;
+    timestamp: number;
+  } | null;
 }

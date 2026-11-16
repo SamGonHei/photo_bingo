@@ -112,6 +112,7 @@ function MainApp() {
     opponentTeam,
     remainingTime,
     countdownText,
+    shakeCountdownText,
     isShufflingEffect,
     boardShakeTeam,
     startGame,
@@ -282,6 +283,19 @@ function MainApp() {
                 <span className="text-3xl font-black text-orange-500 font-jua tracking-wider animate-pulse drop-shadow-sm">
                   {countdownText}
                 </span>
+              </div>
+            )}
+
+            {/* 판 흔들기 발동 시 3초 카운트다운 */}
+            {shakeCountdownText && (
+              <div className="absolute inset-0 z-45 bg-purple-950/90 backdrop-blur-md rounded-2xl flex flex-col items-center justify-center p-4 text-center animate-in fade-in zoom-in-90 duration-150 border-4 border-purple-400 shadow-2xl">
+                <div className="text-4xl mb-2 animate-bounce">🌪️</div>
+                <span className="text-2xl sm:text-3xl font-black text-amber-300 font-jua tracking-wider animate-pulse drop-shadow-md">
+                  {shakeCountdownText}
+                </span>
+                <p className="text-xs font-bold text-purple-200 mt-2 font-jua">
+                  상대팀이 판을 뒤흔들고 있습니다!! 🎲
+                </p>
               </div>
             )}
 

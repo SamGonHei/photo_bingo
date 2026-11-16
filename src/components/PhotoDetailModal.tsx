@@ -37,11 +37,11 @@ export const PhotoDetailModal: React.FC<Props> = ({
           </button>
         </div>
 
-        <div className="w-full aspect-square bg-slate-900 relative">
+        <div className="w-full max-h-96 min-h-[260px] bg-slate-950 relative flex items-center justify-center overflow-hidden">
           <img
             src={cell.photoUrl}
             alt={cell.mission.title}
-            className="w-full h-full object-contain"
+            className="w-full h-full max-h-96 object-contain"
           />
         </div>
 

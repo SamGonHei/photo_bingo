@@ -1,7 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { GameState, TeamId, UserProfile, ChatMessage } from '../types';
 import { INITIAL_MISSIONS } from '../data/missions';
-import { createShuffledCells, calculateCompletedLines, shuffleArray, isCellInked } from '../utils/bingo';
+import {
+  createShuffledCells,
+  calculateCompletedLines,
+  calculateApprovedLines,
+  shuffleArray,
+  isCellInked,
+} from '../utils/bingo';
 import { db, ref, onValue, set, isFirebaseConfigured } from '../utils/firebase';
 import confetti from 'canvas-confetti';
 
@@ -42,6 +48,7 @@ export function getInitialGameState(): GameState {
       skills: { inkAttack: 2, shuffleBoard: 1 },
     },
     messages: [],
+    shakeAlert: null,
   };
 }
 
@@ -70,6 +77,7 @@ export function sanitizeGameState(raw: unknown): GameState {
     teamA,
     teamB,
     messages: Array.isArray(r.messages) ? r.messages : [],
+    shakeAlert: r.shakeAlert || null,
   };
 }
 
@@ -86,6 +94,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
 
   const [remainingTime, setRemainingTime] = useState<number>(7200);
   const [countdownText, setCountdownText] = useState<string | null>(null);
+  const [shakeCountdownText, setShakeCountdownText] = useState<string | null>(null);
   const [isShufflingEffect, setIsShufflingEffect] = useState(false);
   const [boardShakeTeam, setBoardShakeTeam] = useState<TeamId | null>(null);
 
@@ -94,6 +103,8 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
 
   // 게임 시작 연출 1회만 실행되도록 보장하는 ref
   const hasPlayedStartAnimRef = useRef(false);
+  // 판 흔들기 이벤트 중복 처리 방지 ref
+  const lastHandledShakeRef = useRef<number>(0);
 
   // 로컬 및 저장소 상태 갱신
   const updateLocalState = useCallback((newState: GameState) => {
@@ -137,7 +148,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
           const val = snapshot.val();
           const valid = sanitizeGameState(val);
 
-          // 게임 시작 연출 감지 (이전 상태가 WAITING이었고 새로 들어온 상태가 PLAYING일 때 딱 1회만 실행)
+          // 1. 게임 시작 연출 감지 (이전 상태가 WAITING이었고 새로 들어온 상태가 PLAYING일 때 딱 1회만 실행)
           if (valid.phase === 'PLAYING') {
             if (!hasPlayedStartAnimRef.current && gameStateRef.current.phase === 'WAITING') {
               hasPlayedStartAnimRef.current = true;
@@ -157,6 +168,34 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
             setIsShufflingEffect(false);
           }
 
+          // 2. 판 흔들기(상대팀 공격) 감지 -> 상대팀 화면에 3초 카운트다운 연출 발동
+          if (
+            valid.shakeAlert &&
+            currentUser &&
+            valid.shakeAlert.targetTeamId === currentUser.teamId &&
+            valid.shakeAlert.timestamp > lastHandledShakeRef.current &&
+            Date.now() - valid.shakeAlert.timestamp < 10000 // 10초 이내 발생한 이벤트
+          ) {
+            lastHandledShakeRef.current = valid.shakeAlert.timestamp;
+            setBoardShakeTeam(currentUser.teamId);
+
+            // 3초 카운트다운 연출 (3 -> 2 -> 1 -> 와르르르!)
+            setShakeCountdownText('🌪️ 판 흔들기 발동! 3');
+            setTimeout(() => {
+              setShakeCountdownText('🌪️ 판 흔들기 발동! 2');
+              setTimeout(() => {
+                setShakeCountdownText('🌪️ 판 흔들기 발동! 1');
+                setTimeout(() => {
+                  setShakeCountdownText('🎲 와르르르 셔플 중!');
+                  setTimeout(() => {
+                    setShakeCountdownText(null);
+                    setBoardShakeTeam(null);
+                  }, 600);
+                }, 1000);
+              }, 1000);
+            }, 1000);
+          }
+
           updateLocalState(valid);
         } else {
           // 데이터베이스에 상태가 없는 경우 초기 상태 업로드
@@ -172,7 +211,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     return () => {
       unsubscribe();
     };
-  }, [updateLocalState]);
+  }, [currentUser, updateLocalState]);
 
   // 2시간 게임 타이머
   useEffect(() => {
@@ -261,9 +300,10 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
         skills: { inkAttack: 2, shuffleBoard: 1 },
       },
       messages: [],
+      shakeAlert: null,
     };
 
-    // 즉시 전체 참가자에게 상태 브로드캐스트 (모든 클라이언트가 동시에 연출 및 게임 시작)
+    // 즉시 전체 참가자에게 상태 브로드캐스트
     broadcastState(startedState);
   }, [currentUser, broadcastState]);
 
@@ -357,9 +397,9 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
 
     if (rejected.length >= 3) {
       reviewStatus = 'REJECTED';
-      isCompleted = false;
+      isCompleted = false; // 과반수(3표 이상) 노인정 시 탈락!
     } else if (approved.length >= 3) {
-      reviewStatus = 'APPROVED';
+      reviewStatus = 'APPROVED'; // 과반수(3표 이상) 인정 완료!
     }
 
     const updatedCells = targetTeam.cells.map((c, idx) => {
@@ -376,16 +416,20 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     });
 
     const lines = calculateCompletedLines(updatedCells);
+    const approvedLines = calculateApprovedLines(updatedCells);
     let nextPhase = gameState.phase;
     let winner = gameState.winnerTeam;
 
+    // 1. 노인정 과반수로 유효 빙고 줄 수가 3줄 미만으로 떨어진 경우 -> 탈락 후 게임 계속 진행
     if (lines < 3 && rejected.length >= 3) {
       nextPhase = 'PLAYING';
-      alert(`❌ [노인정 과반수!] #${positionIndex + 1}번 미션이 탈락하여 3줄 빙고가 취소되었습니다!`);
+      alert(`❌ [노인정 과반수!] #${positionIndex + 1}번 미션이 탈락하여 3줄 빙고가 취소되었습니다! 게임이 계속됩니다.`);
     } else {
+      // 2. 전체 다 인정이 과반 넘었거나, 과반 인정(3표 이상)된 미션만으로 3줄 빙고가 성립된 경우 -> 즉시 승리 종료!
       const completedCells = updatedCells.filter((c) => c.isCompleted);
-      const allApproved = completedCells.every((c) => (c.approvedUsers?.length ?? 0) >= 3);
-      if (allApproved && lines >= 3) {
+      const allApproved = completedCells.length > 0 && completedCells.every((c) => (c.approvedUsers?.length ?? 0) >= 3);
+
+      if (approvedLines >= 3 || (allApproved && lines >= 3)) {
         nextPhase = 'FINISHED';
         winner = targetTeamKey;
       }
@@ -455,10 +499,10 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     };
 
     broadcastState(nextState);
-    alert(`🦑 [먹물 투척!] 상대 ${targetTeam.name}의 칸 2개를 3분간 가렸습니다!`);
+    alert(`🦑 [먹물 투척!] 상대 ${targetTeam.name}의 칸 2개를 3분간 가렸습니다! (실루엣에 검은색으로 표시됩니다)`);
   }, [currentUser, gameState, broadcastState]);
 
-  // 판 흔들기
+  // 판 흔들기 (상대팀 화면에 3초 카운트다운 발동 후 셔플)
   const useShuffleOpponentBoard = useCallback(() => {
     if (!currentUser?.isLeader) {
       alert('⚠️ 판 흔들기는 각 팀의 팀장만 사용할 수 있습니다!');
@@ -480,13 +524,14 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
       positionIndex: index,
     }));
 
-    setBoardShakeTeam(targetKey);
-    setTimeout(() => setBoardShakeTeam(null), 700);
-
     const lines = calculateCompletedLines(shuffled);
 
     const nextState: GameState = {
       ...gameState,
+      shakeAlert: {
+        targetTeamId: targetKey,
+        timestamp: Date.now(),
+      },
       [attackerKey]: {
         ...attackerTeam,
         skills: { ...attackerTeam.skills, shuffleBoard: attackerTeam.skills.shuffleBoard - 1 },
@@ -499,7 +544,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     };
 
     broadcastState(nextState);
-    alert(`🌪️ [판 흔들기!] 상대 ${targetTeam.name}의 빙고판 전체를 뒤흔들었습니다!`);
+    alert(`🌪️ [판 흔들기!] 상대 ${targetTeam.name}의 빙고판을 뒤흔들었습니다! (상대 화면에 3초 카운트다운이 시작됩니다)`);
   }, [currentUser, gameState, broadcastState]);
 
   // 채팅 전송
@@ -535,6 +580,7 @@ export function usePhotoBingo(currentUser: UserProfile | null) {
     opponentTeam,
     remainingTime,
     countdownText,
+    shakeCountdownText,
     isShufflingEffect,
     boardShakeTeam,
     startGame,

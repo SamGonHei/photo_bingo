@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import type { TeamState, UserProfile } from '../types';
-import { ThumbsUp, ThumbsDown, CheckCircle, XCircle, AlertTriangle, Clock, X } from 'lucide-react';
+import { ThumbsUp, ThumbsDown, CheckCircle, XCircle, AlertTriangle, Clock, X, Maximize2 } from 'lucide-react';
 
 interface Props {
   isOpen: boolean;
@@ -22,6 +22,7 @@ export const ReviewModal: React.FC<Props> = ({
   onClose,
 }) => {
   const [remSeconds, setRemSeconds] = useState(REVIEW_DURATION_SEC);
+  const [previewPhoto, setPreviewPhoto] = useState<{ url: string; title: string } | null>(null);
 
   useEffect(() => {
     if (!reviewStartTime || !isOpen) return;
@@ -50,7 +51,7 @@ export const ReviewModal: React.FC<Props> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="w-full max-w-md max-h-[90dvh] bg-[#FFFDF9] rounded-3xl flex flex-col overflow-hidden shadow-2xl border-4 border-amber-300 relative">
+      <div className="w-full max-w-md max-h-[92dvh] bg-[#FFFDF9] rounded-3xl flex flex-col overflow-hidden shadow-2xl border-4 border-amber-300 relative">
         {/* 우측 상단 나가기(닫기) 버튼 */}
         <button
           onClick={onClose}
@@ -62,7 +63,7 @@ export const ReviewModal: React.FC<Props> = ({
         </button>
 
         {/* 상단 헤더 */}
-        <div className="p-3.5 bg-linear-to-r from-amber-100 via-orange-100 to-rose-100 border-b border-orange-200 text-center shrink-0 pr-24">
+        <div className="p-3.5 bg-gradient-to-r from-amber-100 via-orange-100 to-rose-100 border-b border-orange-200 text-center shrink-0 pr-24">
           <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500 text-white text-[9.5px] font-black font-jua mb-1">
             ⚖️ 상대팀 사진 심사 타임!
           </div>
@@ -129,35 +130,46 @@ export const ReviewModal: React.FC<Props> = ({
                     </span>
                   ) : isApproved ? (
                     <span className="inline-flex items-center gap-0.5 text-[10px] font-black text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full font-jua">
-                      <CheckCircle className="w-3 h-3" /> 인정 완료
+                      <CheckCircle className="w-3 h-3" /> 인정 완료 ({approvedCount}표)
                     </span>
                   ) : (
                     <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full font-jua">
-                      심사 진행 중
+                      심사 진행 중 ({approvedCount}/3)
                     </span>
                   )}
                 </div>
 
-                <p className="text-[10px] text-slate-500 mb-2 font-medium">
+                <p className="text-[10.5px] text-slate-600 mb-2 font-medium leading-relaxed">
                   {cell.mission.description}
                 </p>
 
-                {/* 등록된 사진 */}
+                {/* 등록된 사진 - 세로/가로 사진 모두 넉넉하게 크게 표시 */}
                 {cell.photoUrl ? (
-                  <div className="w-full aspect-video rounded-xl bg-slate-900 overflow-hidden mb-2 relative shadow-inner">
+                  <div
+                    onClick={() => setPreviewPhoto({ url: cell.photoUrl!, title: cell.mission.title })}
+                    className="w-full h-56 sm:h-64 rounded-xl bg-slate-950 overflow-hidden mb-2 relative shadow-inner cursor-pointer group flex items-center justify-center"
+                    title="클릭하여 원본 크게 보기"
+                  >
                     <img
                       src={cell.photoUrl}
                       alt={cell.mission.title}
-                      className="w-full h-full object-contain"
+                      className="w-full h-full object-contain transition-transform duration-200 group-hover:scale-102"
                     />
+
+                    {/* 확대 아이콘 힌트 */}
+                    <div className="absolute top-2 left-2 bg-black/60 hover:bg-black/80 text-white text-[9px] px-2 py-0.5 rounded-full flex items-center gap-1 font-bold backdrop-blur-xs transition-opacity">
+                      <Maximize2 className="w-2.5 h-2.5" />
+                      <span>터치하여 크게 보기</span>
+                    </div>
+
                     {cell.completedBy && (
-                      <span className="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1.5 py-0.2 rounded font-mono font-bold">
+                      <span className="absolute bottom-2 right-2 bg-black/70 text-white text-[9.5px] px-2 py-0.5 rounded-md font-mono font-bold shadow-xs">
                         by {cell.completedBy.toUpperCase()}
                       </span>
                     )}
                   </div>
                 ) : (
-                  <div className="w-full py-4 text-center text-xs text-slate-400 bg-slate-100 rounded-xl mb-2">
+                  <div className="w-full py-6 text-center text-xs text-slate-400 bg-slate-100 rounded-xl mb-2 font-jua">
                     등록된 사진 없음
                   </div>
                 )}
@@ -211,10 +223,38 @@ export const ReviewModal: React.FC<Props> = ({
         <div className="p-2.5 bg-white border-t border-orange-100 text-center shrink-0">
           <div className="flex items-center justify-center gap-1 text-[10.5px] font-bold text-slate-500">
             <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-            <span>상대팀 5명 중 3명 이상(과반수) 노인정 시 빙고가 취소되며 게임이 계속됩니다.</span>
+            <span>상대팀 5명 중 3명 이상(과반수) 인정 시 빙고가 확정되며 최종 승리합니다! 🏆</span>
           </div>
         </div>
       </div>
+
+      {/* 사진 전체화면 확대 라이트박스 모달 */}
+      {previewPhoto && (
+        <div
+          onClick={() => setPreviewPhoto(null)}
+          className="fixed inset-0 z-60 bg-black/95 flex flex-col items-center justify-center p-2 animate-in fade-in duration-150 cursor-zoom-out"
+        >
+          <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+            <span className="text-white text-xs font-bold bg-white/20 px-3 py-1 rounded-full font-jua">
+              {previewPhoto.title}
+            </span>
+            <button
+              onClick={() => setPreviewPhoto(null)}
+              className="p-2 rounded-full bg-white/20 hover:bg-white/40 text-white transition-colors"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+          <img
+            src={previewPhoto.url}
+            alt={previewPhoto.title}
+            className="max-w-full max-h-[88vh] object-contain rounded-lg shadow-2xl"
+          />
+          <div className="text-white/60 text-xs mt-2 font-semibold">
+            화면 아무 곳이나 터치하면 닫힙니다
+          </div>
+        </div>
+      )}
     </div>
   );
 };

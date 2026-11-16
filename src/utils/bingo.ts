@@ -36,13 +36,28 @@ export function createShuffledCells(missions: Mission[]): BingoCell[] {
   }));
 }
 
-// 빙고 완성 줄 수 계산
+// 빙고 완성 줄 수 계산 (단순 완료 기준)
 export function calculateCompletedLines(cells: BingoCell[]): number {
   if (!cells || cells.length !== 16) return 0;
   let count = 0;
   for (const line of BINGO_LINES) {
     const isLineComplete = line.every((index) => cells[index]?.isCompleted);
     if (isLineComplete) {
+      count++;
+    }
+  }
+  return count;
+}
+
+// 과반수(3표 이상) 인정받은 셀들로만 완성된 줄 수 계산
+export function calculateApprovedLines(cells: BingoCell[]): number {
+  if (!cells || cells.length !== 16) return 0;
+  let count = 0;
+  for (const line of BINGO_LINES) {
+    const isLineApproved = line.every(
+      (index) => cells[index]?.isCompleted && (cells[index]?.approvedUsers?.length ?? 0) >= 3
+    );
+    if (isLineApproved) {
       count++;
     }
   }
@@ -61,8 +76,8 @@ export function getInkRemainingSeconds(cell?: BingoCell): number {
   return Math.max(0, Math.ceil((cell!.inkedUntil! - Date.now()) / 1000));
 }
 
-// 모바일 사진 용량 최적화를 위한 캔버스 리사이즈 (클라우드 전송 및 용량 최적화)
-export function resizeImage(file: File, maxWidth = 400, quality = 0.5): Promise<string> {
+// 모바일 사진 고화질 + 비율 보존 + 용량 최적화 리사이즈 (가로/세로 긴 변 기준 800px, 퀄리티 0.75)
+export function resizeImage(file: File, maxDimension = 800, quality = 0.75): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -72,9 +87,14 @@ export function resizeImage(file: File, maxWidth = 400, quality = 0.5): Promise<
         let width = img.width;
         let height = img.height;
 
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width);
-          width = maxWidth;
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
         }
 
         canvas.width = width;
@@ -84,6 +104,8 @@ export function resizeImage(file: File, maxWidth = 400, quality = 0.5): Promise<
           resolve(event.target?.result as string);
           return;
         }
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
         resolve(dataUrl);
